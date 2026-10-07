@@ -85,7 +85,7 @@ app = FastAPI(title="Maseru Smart Traffic", lifespan=lifespan)
 async def no_stale_frontend(request: Request, call_next):
     """Make browsers re-check the app's files, so users get updates without a hard refresh."""
     response = await call_next(request)
-    if not request.url.path.startswith(("/api/", "/webhooks/", "/ws")):
+    if not request.url.path.startswith(("/api/", "/webhooks/", "/ws", "/healthz")):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -154,6 +154,12 @@ def current_jpeg(iid: str) -> bytes | None:
 
 
 # ----------------------------------------------------------------- traffic
+
+@app.get("/healthz")
+def healthz():
+    """Tiny check for Render and uptime monitors (UptimeRobot pings keep the free plan awake)."""
+    return {"ok": True, "cameras_online": sum(1 for r in remote_cams.values() if time.time() - r["last"] < REMOTE_TIMEOUT)}
+
 
 @app.get("/api/meta")
 def meta(request: Request):

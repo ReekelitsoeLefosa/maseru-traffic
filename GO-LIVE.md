@@ -48,9 +48,16 @@ and phones registered for alerts. Neon is a free PostgreSQL database that keeps 
 
 Updating later: `git add -A`, `git commit -m "..."`, `git push` - Render redeploys automatically.
 
+### 1d. Keep it awake 24/7 (free)
+Render's free server sleeps after 15 minutes without visitors. A free uptime monitor visits it every
+5 minutes so it never sleeps (and emails you if it goes down):
+1. 👤 Sign up at https://uptimerobot.com (free plan).
+2. **+ New monitor** → type **HTTP(s)** → URL `https://maseru-traffic.onrender.com/healthz` →
+   interval **5 minutes** → **Create monitor**.
+3. Add your email as the alert contact, so you hear about outages.
+
 **Free-plan limits to know:**
-- The server sleeps after 15 minutes without requests. A running camera station sends data every 2 s, so
-  it stays awake. If the station PC is off, the first person to open the app waits ~1 minute for it to wake.
+- With the uptime monitor (or a running camera station, which sends data every 2 s) the server stays awake.
 - 750 free hours/month covers one always-on service (a month is ~744 h) - don't run a second free service.
 - 100 GB/month of traffic: plenty for alerts and routes; live camera snapshots use roughly 1 GB/month per
   camera plus viewing.
