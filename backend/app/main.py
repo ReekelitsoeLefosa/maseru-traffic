@@ -3,6 +3,8 @@
 Run:  uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 """
 import asyncio
+import base64
+import hashlib
 import hmac
 import json
 import secrets
@@ -356,7 +358,9 @@ def subscribe(body: Subscriber, request: Request):
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.save_pending(phone, data, code)
     text = f"Maseru Traffic code: {code}. Enter it in the app to confirm traffic alerts. Valid 10 minutes."
-    status = notifier.send_whatsapp(phone, text) if body.whatsapp else notifier.send_sms(phone, text)
+    code_template = {"name": config.META_WA_CODE_TEMPLATE, "params": [code], "code": code}
+    status = (notifier.send_whatsapp(phone, text, None, code_template) if body.whatsapp
+              else notifier.send_sms(phone, text))
     if status != "sent":
         db.delete_pending(phone)
         raise HTTPException(502, "Could not send the code. Check the number and try again.")
@@ -458,14 +462,51 @@ def bot_chat(body: ChatIn, request: Request):
     return {"reply": bot.handle(notifier.normalize_phone(body.phone), body.text, can_subscribe=is_admin(request))}
 
 
+def _twiml(reply: str | None) -> Response:
+    msg = f"<Message>{escape(reply)}</Message>" if reply else ""
+    return Response(f'<?xml version="1.0" encoding="UTF-8"?><Response>{msg}</Response>', media_type="application/xml")
+
+
+def _check_twilio(request: Request, form) -> None:
+    """Reject requests that weren't signed by Twilio (anyone can call a public webhook URL)."""
+    if not config.TWILIO_AUTH_TOKEN:
+        return                                  # console/testing mode: nothing to check against
+    base = config.public_url().rstrip("/") or str(request.base_url).rstrip("/")
+    url = base + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    signed = url + "".join(k + v for k, v in sorted((k, str(v)) for k, v in form.items()))
+    expected = base64.b64encode(hmac.new(config.TWILIO_AUTH_TOKEN.encode(), signed.encode(), hashlib.sha1).digest()).decode()
+    if not hmac.compare_digest(expected, request.headers.get("x-twilio-signature", "")):
+        print(f"[webhook] rejected Twilio request: bad signature (is PUBLIC_URL exactly {base!r}?)")
+        raise HTTPException(403, "Bad signature")
+
+
 @app.post("/webhooks/twilio/whatsapp")
 async def twilio_whatsapp(request: Request):
     form = await request.form()
+    _check_twilio(request, form)
     phone = str(form.get("From", "")).replace("whatsapp:", "")
-    reply = bot.handle(phone, str(form.get("Body", "")))
     db.log_alert(phone, "whatsapp:bot-in", None, str(form.get("Body", "")), "received")
-    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{escape(reply)}</Message></Response>'
-    return Response(twiml, media_type="application/xml")
+    return _twiml(bot.handle(phone, str(form.get("Body", ""))))
+
+
+STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "EMA", "KHAOTSA"}   # incl. Sesotho
+START_WORDS = {"START", "UNSTOP", "YES"}
+
+
+@app.post("/webhooks/twilio/sms")
+async def twilio_sms(request: Request):
+    """Replies to our SMS alerts. STOP turns SMS alerts off for that number; START turns them back on."""
+    form = await request.form()
+    _check_twilio(request, form)
+    phone, text = str(form.get("From", "")), str(form.get("Body", "")).strip().upper()
+    db.log_alert(phone, "sms:in", None, text[:160], "received")
+    if text in STOP_WORDS:
+        db.set_sms(phone, False)
+        return _twiml("Maseru Traffic: you will no longer get SMS alerts. Reply START to turn them back on.")
+    if text in START_WORDS and db.get_subscriber(phone):
+        db.set_sms(phone, True)
+        return _twiml("Maseru Traffic: SMS alerts are on again. Reply STOP to end.")
+    return _twiml(None)       # other replies: no answer (each SMS we send costs money)
 
 
 @app.get("/webhooks/meta/whatsapp")
@@ -478,7 +519,12 @@ def meta_verify(request: Request):
 
 @app.post("/webhooks/meta/whatsapp")
 async def meta_incoming(request: Request):
-    data = await request.json()
+    raw = await request.body()
+    if config.META_APP_SECRET:     # prove the message really comes from Meta
+        expected = "sha256=" + hmac.new(config.META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, request.headers.get("x-hub-signature-256", "")):
+            raise HTTPException(403, "Bad signature")
+    data = json.loads(raw or b"{}")
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             for msg in change.get("value", {}).get("messages", []):

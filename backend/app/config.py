@@ -44,8 +44,8 @@ SIMULATE_OTHER_INTERSECTIONS = _bool("SIMULATE_OTHER_INTERSECTIONS", True)
 
 # --- Notifications ---------------------------------------------------------
 # SMS_PROVIDER / WHATSAPP_PROVIDER: "console" (log only), "twilio", or "meta" (WhatsApp only)
-SMS_PROVIDER = os.getenv("SMS_PROVIDER", "console")
-WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "console")
+SMS_PROVIDER = (os.getenv("SMS_PROVIDER") or "console").strip().lower()
+WHATSAPP_PROVIDER = (os.getenv("WHATSAPP_PROVIDER") or "console").strip().lower()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_SMS_FROM = os.getenv("TWILIO_SMS_FROM", "")            # e.g. +1XXXXXXXXXX or alphanumeric sender id
@@ -53,6 +53,12 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")  # e.g. whatsapp:+1
 META_WA_TOKEN = os.getenv("META_WA_TOKEN", "")
 META_WA_PHONE_NUMBER_ID = os.getenv("META_WA_PHONE_NUMBER_ID", "")
 META_WA_VERIFY_TOKEN = os.getenv("META_WA_VERIFY_TOKEN", "maseru-traffic-verify")
+# App secret (Meta app dashboard -> App settings -> Basic): proves incoming webhooks really come from Meta.
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+# Names of the message templates you created and Meta approved (WhatsApp Manager -> Message templates).
+META_WA_ALERT_TEMPLATE = os.getenv("META_WA_ALERT_TEMPLATE", "traffic_alert")
+META_WA_CODE_TEMPLATE = os.getenv("META_WA_CODE_TEMPLATE", "verification_code")
+META_WA_TEMPLATE_LANG = os.getenv("META_WA_TEMPLATE_LANG", "en")
 # Don't alert the same user about the same intersection more often than this.
 ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "900"))
 DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "266")  # Lesotho

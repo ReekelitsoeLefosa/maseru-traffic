@@ -26,7 +26,22 @@ services:
         sync: false              # Firebase service-account key (whole JSON) for push notifications
       - key: SIMULATE_OTHER_INTERSECTIONS
         value: "true"
-      - key: SMS_PROVIDER
-        value: console
-      - key: WHATSAPP_PROVIDER
-        value: console
+      # ---- messaging (set in the Render dashboard; "console" = only write messages to the log) ----
+      - key: SMS_PROVIDER          # console | twilio
+        sync: false
+      - key: WHATSAPP_PROVIDER     # console | meta | twilio
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_SMS_FROM       # your Twilio number (+1...) or an approved sender name
+        sync: false
+      - key: META_WA_TOKEN         # permanent system-user token
+        sync: false
+      - key: META_WA_PHONE_NUMBER_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_WA_VERIFY_TOKEN  # paste this into Meta's webhook "Verify token" box
+        generateValue: true

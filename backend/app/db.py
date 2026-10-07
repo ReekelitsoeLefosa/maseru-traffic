@@ -214,6 +214,16 @@ def list_subscribers(active_only=True) -> list[dict]:
     return [_sub_row(r) for r in query(sql)]
 
 
+def set_sms(phone, enabled: bool):
+    execute("UPDATE subscribers SET sms=? WHERE phone=?", (int(enabled), phone))
+
+
+def last_inbound_ts(phone) -> float:
+    """When this person last messaged our WhatsApp bot (opens WhatsApp's free 24-hour window)."""
+    rows = query("SELECT MAX(ts) AS t FROM alerts WHERE phone=? AND channel='whatsapp:bot-in'", (phone,))
+    return rows[0]["t"] or 0.0
+
+
 def deactivate_subscriber(phone):
     execute("UPDATE subscribers SET active=0 WHERE phone=?", (phone,))
 

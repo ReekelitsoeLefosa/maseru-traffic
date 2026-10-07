@@ -102,6 +102,48 @@ SHARE_ONLINE=false
 Start the Windows app. In the cloud app, Lekhaloaneng now shows **live camera** instead of simulated.
 If the internet drops, the station keeps the measurements and sends them when it's back.
 
+## 2b. SMS and WhatsApp alerts
+
+Costs to Lesotho (check current prices): **SMS via Twilio ≈ US$0.41 per message** (the app keeps every
+alert to one 160-character SMS); **WhatsApp ≈ a few US cents per alert template**, and **free** for 24 h
+after the person last messaged your bot. So WhatsApp is the main channel and SMS the backup.
+In Render → **Environment**, a provider set to `console` (or empty) only writes messages to the log.
+
+### WhatsApp (Meta WhatsApp Cloud API) 👤
+1. https://business.facebook.com → create a **Meta Business** account (needs your business/organisation
+   name and an email).
+2. https://developers.facebook.com → **My Apps → Create app** → type **Business** → add the
+   **WhatsApp** product. Meta gives you a free **test number** to try with up to 5 phones of your own.
+3. To use a real number: **WhatsApp → API Setup → Add phone number** - a number that is *not* already on
+   WhatsApp, which you verify by SMS/call. Then **verify your business** in Business Settings.
+4. **Permanent token:** Business Settings → Users → **System users** → add one (Admin) → **Generate token**
+   for your app with `whatsapp_business_messaging` and `whatsapp_business_management`.
+5. **Message templates** (WhatsApp Manager → Message templates → Create). Create exactly these two:
+   - Name **`traffic_alert`**, category **Utility**, language **English**, body:
+     `Maseru Traffic alert: {{1}} traffic at {{2}}. {{3}} Reply STOP to stop alerts.`
+     (sample values: `Heavy` / `Main Circle (Cathedral)` / `Use Kofi Annan Road (about 11 min).`)
+   - Name **`verification_code`**, category **Authentication**, **Copy code** button.
+   Wait for both to show **Approved**.
+6. **Webhook** (so the bot can answer): App → WhatsApp → **Configuration** → Callback URL
+   `https://maseru-traffic.onrender.com/webhooks/meta/whatsapp`, Verify token = Render's
+   `META_WA_VERIFY_TOKEN`. Then subscribe to the **messages** field.
+7. In Render → **Environment** set: `WHATSAPP_PROVIDER=meta`, `META_WA_TOKEN`, `META_WA_PHONE_NUMBER_ID`
+   (API Setup page) and `META_APP_SECRET` (App settings → Basic). Save.
+8. Test: send `hi` to your WhatsApp number - the bot answers with the menu.
+
+### SMS (Twilio) 👤
+1. https://www.twilio.com → sign up. The free trial can only text numbers you verify first; **upgrade**
+   (add credit) to text anyone.
+2. Buy a number with SMS (**Phone Numbers → Buy a number**). Check Twilio's *Lesotho* guidelines page for
+   whether an alphanumeric sender name like `MaseruTrfc` is allowed - replies (STOP) only work with a number.
+3. Number → **Messaging configuration** → "A message comes in": Webhook
+   `https://maseru-traffic.onrender.com/webhooks/twilio/sms` (HTTP POST).
+4. In Render → **Environment** set: `SMS_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+   (Twilio console home page), `TWILIO_SMS_FROM` (the number, e.g. `+1...`). Save.
+5. Test in the app as admin: **Alerts → Send test message** to your number.
+
+`PUBLIC_URL` must be exactly `https://maseru-traffic.onrender.com` - Twilio messages are checked against it.
+
 ## 3. Push notifications (free) - Firebase
 
 1. 👤 https://console.firebase.google.com → **Add project** (Google Analytics not needed).
