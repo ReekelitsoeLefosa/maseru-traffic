@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.env
+data/
+videos/*
+!videos/.gitkeep
+*.pt
+runs/
+datasets/
+desktop/cloudflared.exe
+# station-specific (local video paths / camera addresses); cameras.example.json is the template
+cameras.json
+mobile/node_modules/
+# app signing keys: back these up somewhere safe, never share or commit them
+*.jks
+*.keystore
+mobile/android/app/google-services.json

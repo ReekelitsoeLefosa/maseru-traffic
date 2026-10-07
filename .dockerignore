@@ -1,0 +1,11 @@
+.env
+data
+datasets
+runs
+videos
+mobile
+desktop
+tools
+*.pt
+**/__pycache__
+cameras.json

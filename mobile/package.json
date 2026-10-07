@@ -1,0 +1,19 @@
+{
+  "name": "maseru-traffic-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android/iOS app for Maseru Smart Traffic. The screens come from the cloud server; this adds native push notifications and location.",
+  "scripts": {
+    "sync": "cap sync",
+    "android": "cap sync android && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.3",
+    "@capacitor/push-notifications": "^8.1.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}

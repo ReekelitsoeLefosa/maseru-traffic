@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#00209F">
+  <meta name="description" content="Live traffic levels, vehicle counts, best routes and alerts for Maseru junctions.">
+  <!-- iOS: full-screen app when added to the Home Screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Maseru Traffic">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <title>Maseru Smart Traffic</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand"><img class="logo" src="icons/icon-192.png" alt=""><div><b>Maseru Smart Traffic</b><small id="conn">connecting…</small></div></div>
+  <div class="header-actions">
+    <button id="installBtn" class="install hidden" type="button">⬇ Install app</button>
+    <select id="intersection" aria-label="Intersection"></select>
+  </div>
+</header>
+
+<dialog id="installHelp">
+  <h3>Install Maseru Traffic</h3>
+  <div id="installSteps"></div>
+  <form method="dialog"><button>OK</button></form>
+</dialog>
+
+<main>
+  <!-- LIVE -->
+  <section id="tab-live" class="tab active">
+    <div class="card video-card">
+      <div class="video-wrap" id="videoWrap">
+        <img id="video" alt="Live annotated camera feed">
+        <svg id="lineOverlay" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+        <div id="noVideo" class="no-video">No camera at this junction — showing <b>simulated</b> traffic.<br>Attach a camera in <code>cameras.json</code>.</div>
+      </div>
+      <div class="video-bar">
+        <span id="camStatus" class="muted"></span>
+        <button id="editLines" class="ghost small">✏️ Counting lines</button>
+      </div>
+      <div id="lineEditor" class="line-editor hidden">
+        <p class="muted">Click two points on the video to draw a counting line across one approach, then pick its approach.</p>
+        <div class="row">
+          <select id="lineApproach"><option>N</option><option>S</option><option>E</option><option>W</option></select>
+          <select id="lineDir"><option value="both">count both directions</option><option value="in">only "in"</option><option value="out">only "out"</option></select>
+        </div>
+        <ul id="lineList"></ul>
+        <div class="row"><button id="saveLines">Save lines</button><button id="clearLines" class="ghost">Clear</button></div>
+      </div>
+    </div>
+
+    <div class="card level-card" id="levelCard">
+      <div><span class="muted">Traffic level</span><h2 id="levelText">–</h2></div>
+      <div class="gauge"><div id="gaugeFill"></div></div>
+      <small class="muted" id="sourceTag"></small>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><span id="kTotal">0</span><small>vehicles · last 5 min</small></div>
+      <div class="kpi"><span id="kPT">0</span><small>taxis & buses · last 5 min</small></div>
+      <div class="kpi"><span id="kHour">0</span><small>vehicles / hour (rate)</small></div>
+      <div class="kpi"><span id="kOcc">0</span><small>vehicles in view</small></div>
+    </div>
+
+    <div class="card">
+      <h3>Current 5-minute window <small class="muted" id="winLabel"></small></h3>
+      <div class="progress"><div id="winProgress"></div></div>
+      <p><b id="winCount">0</b> vehicles so far · <span id="winLeft"></span> left</p>
+      <div id="catBars" class="cat-bars"></div>
+    </div>
+
+    <div class="card">
+      <h3>Last hour, per 5-minute window</h3>
+      <div class="chart-box"><canvas id="histChart"></canvas></div>
+    </div>
+  </section>
+
+  <!-- MAP & ROUTE -->
+  <section id="tab-map" class="tab">
+    <div class="card">
+      <h3>Find the best route now</h3>
+      <div class="row">
+        <select id="routeFrom" aria-label="From"></select>
+        <span class="arrow">→</span>
+        <select id="routeTo" aria-label="To"></select>
+      </div>
+      <button id="nearMe" type="button" class="ghost small">📍 Start from the junction nearest me</button>
+      <small id="nearMeMsg" class="muted"></small>
+      <button id="routeBtn" class="block">Suggest route</button>
+      <div id="routeResult"></div>
+    </div>
+    <div class="card map-card"><div id="map"></div>
+      <div class="legend"><span class="dot LOW"></span>Free <span class="dot MODERATE"></span>Moderate <span class="dot HEAVY"></span>Heavy <span class="dot SEVERE"></span>Severe</div>
+    </div>
+  </section>
+
+  <!-- SIGNALS -->
+  <section id="tab-signals" class="tab">
+    <div class="card">
+      <h3>Adaptive signal plan <small class="muted" id="sigName"></small></h3>
+      <p class="muted">Green times recalculated from the vehicles actually counted in the last 5 minutes (Webster's method, buses and trucks weighted as larger vehicles) — compared with a traditional fixed 90-second cycle.</p>
+      <div id="signalBody"></div>
+    </div>
+    <div class="card">
+      <h3>All junctions</h3>
+      <table class="tbl"><thead><tr><th>Junction</th><th>Level</th><th>5 min</th><th>Cycle</th><th>Delay ↓</th></tr></thead><tbody id="sigTable"></tbody></table>
+    </div>
+  </section>
+
+  <!-- ALERTS -->
+  <section id="tab-alerts" class="tab">
+    <div class="card native-only" id="pushCard">
+      <h3>Alerts on this phone <small class="muted">free</small></h3>
+      <p class="muted small">Get a notification when your trip or watched junctions get busy. Pick your daily trip and
+        junctions in the form below first.</p>
+      <div class="row"><button id="pushOn" type="button">🔔 Turn on alerts</button><button id="pushOff" type="button" class="ghost hidden">Turn off</button></div>
+      <p id="pushMsg" class="muted"></p>
+    </div>
+    <div class="card">
+      <h3>Get traffic alerts on your phone</h3>
+      <form id="subForm">
+        <label>Name<input name="name" placeholder="e.g. Palesa"></label>
+        <label>Phone number<input name="phone" required placeholder="e.g. 5xxx xxxx or +266 6xxx xxxx"></label>
+        <div class="row checks">
+          <label><input type="checkbox" name="whatsapp" checked> WhatsApp</label>
+          <label><input type="checkbox" name="sms" checked> SMS</label>
+        </div>
+        <div class="row">
+          <label>Daily trip from<select name="origin"></select></label>
+          <label>to<select name="destination"></select></label>
+        </div>
+        <label>Also alert me about these junctions</label>
+        <div id="watchList" class="watch-list"></div>
+        <div class="row"><button type="submit">Subscribe</button><button type="button" id="testBtn" class="ghost admin-only">Send test message</button></div>
+        <p id="subMsg" class="muted"></p>
+      </form>
+      <form id="verifyForm" class="hidden">
+        <p id="verifyMsg"></p>
+        <div class="row"><input id="verifyCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"><button>Confirm</button></div>
+      </form>
+      <small class="muted"><a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a> · </small>
+      <small class="muted">Alerts go out when a junction on your trip (or on your watch list) reaches <b>Heavy</b> or <b>Severe</b> at the end of a 5-minute window, with a suggested detour. Max one alert per junction every 15 minutes.</small>
+    </div>
+    <div class="card admin-only" id="shareCard">
+      <h3>Connect phones</h3>
+      <div id="shareBody"></div>
+    </div>
+    <div class="card admin-only">
+      <h3>Demo: cause congestion</h3>
+      <div class="row"><select id="incidentAt"></select><button id="incidentBtn" class="ghost">Simulate incident (15 min)</button></div>
+      <small class="muted">Only for simulated junctions; alerts fire when the current 5-minute window closes.</small>
+    </div>
+    <div class="card admin-only">
+      <h3>Subscribers</h3>
+      <ul id="subList" class="list"></ul>
+    </div>
+    <div class="card admin-only">
+      <h3>Message log <small class="muted" id="providers"></small></h3>
+      <ul id="alertLog" class="list log"></ul>
+    </div>
+  </section>
+
+  <!-- BOT -->
+  <section id="tab-bot" class="tab">
+    <div class="card chat-card">
+      <h3>WhatsApp bot preview</h3>
+      <p class="muted small">This is exactly what the bot replies on WhatsApp. Try: <code>status</code>, <code>route pioneer mall to airport</code>, <code>watch kingsway</code>.</p>
+      <div id="chat" class="chat"></div>
+      <form id="chatForm" class="row"><input id="chatInput" placeholder="Type a message" autocomplete="off"><button>Send</button></form>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-tab="live" class="active">📹<span>Live</span></button>
+  <button data-tab="map">🗺️<span>Map & Route</span></button>
+  <button data-tab="signals">🚥<span>Signals</span></button>
+  <button data-tab="alerts">🔔<span>Alerts</span></button>
+  <button data-tab="bot">💬<span>Bot</span></button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

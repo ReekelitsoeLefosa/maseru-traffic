@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- Shown only if the app can't reach the traffic server (server.url in capacitor.config.json). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Maseru Traffic</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; text-align: center; padding: 24px;
+           font-family: system-ui, sans-serif; background: #00209F; color: #fff; box-sizing: border-box; }
+    button { font: inherit; padding: 10px 18px; border-radius: 10px; border: 0; background: #fff; color: #00209F; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div>
+    <h1>🚦 Maseru Traffic</h1>
+    <p>Can't reach the traffic server. Check your internet connection.</p>
+    <button onclick="location.reload()">Try again</button>
+  </div>
+</body>
+</html>

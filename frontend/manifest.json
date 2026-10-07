@@ -1,0 +1,23 @@
+{
+  "id": "/",
+  "name": "Maseru Smart Traffic",
+  "short_name": "Maseru Traffic",
+  "description": "Live traffic levels, vehicle counts, best routes and alerts for Maseru junctions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#00209F",
+  "theme_color": "#00209F",
+  "categories": ["navigation", "travel", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Best route now", "url": "/?tab=map", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Ask the traffic bot", "url": "/?tab=bot", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

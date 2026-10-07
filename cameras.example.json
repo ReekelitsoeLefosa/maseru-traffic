@@ -1,0 +1,10 @@
+[
+  {
+    "intersection_id": "kingsway_pioneer",
+    "source": "videos/test_traffic.mp4",
+    "loop": true,
+    "lines": [
+      { "approach": "N", "points": [0.05, 0.62, 0.95, 0.62], "count_direction": "both" }
+    ]
+  }
+]

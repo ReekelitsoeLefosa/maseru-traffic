@@ -1,0 +1,15 @@
+{
+  "appId": "ls.maseru.traffic",
+  "appName": "Maseru Traffic",
+  "webDir": "www",
+  "server": {
+    "url": "https://REPLACE-WITH-YOUR-SERVER-ADDRESS",
+    "cleartext": false,
+    "errorPath": "index.html"
+  },
+  "plugins": {
+    "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] }
+  },
+  "android": { "backgroundColor": "#00209F" },
+  "ios": { "backgroundColor": "#00209F", "contentInset": "always" }
+}

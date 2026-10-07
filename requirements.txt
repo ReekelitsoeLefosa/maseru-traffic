@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+httpx
+python-multipart
+numpy
+ultralytics   # brings PyTorch and opencv-python
+lap
+pywebview; sys_platform == "win32"   # the Windows app window

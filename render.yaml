@@ -1,0 +1,32 @@
+# Render blueprint: Render reads this file and creates the cloud server for you.
+# Render dashboard -> New -> Blueprint -> pick this GitHub repository.
+services:
+  - type: web
+    name: maseru-traffic
+    runtime: python
+    plan: free
+    region: frankfurt            # closest Render region to Lesotho
+    buildCommand: pip install -r deploy/requirements-server.txt
+    startCommand: uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/meta
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # Free plan disks are wiped on every restart: keep data in a free Neon PostgreSQL database.
+      - key: DATABASE_URL
+        sync: false              # paste the Neon connection string when Render asks
+      - key: STATION_KEY         # camera stations must send this key (copy it into the station's .env)
+        generateValue: true
+      - key: ADMIN_TOKEN         # open https://<your-app>.onrender.com/?admin=<this> once to unlock admin
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false              # https://<your-app>.onrender.com
+      - key: FCM_CREDENTIALS_JSON
+        sync: false              # Firebase service-account key (whole JSON) for push notifications
+      - key: SIMULATE_OTHER_INTERSECTIONS
+        value: "true"
+      - key: SMS_PROVIDER
+        value: console
+      - key: WHATSAPP_PROVIDER
+        value: console

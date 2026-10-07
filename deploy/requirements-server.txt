@@ -1,0 +1,8 @@
+# Cloud server only: no AI here (camera stations run the AI), so no PyTorch/OpenCV.
+fastapi
+uvicorn[standard]
+python-dotenv
+httpx
+python-multipart
+psycopg[binary]   # PostgreSQL (Neon) - needed on Render's free plan
+google-auth       # push notifications (Firebase Cloud Messaging)
