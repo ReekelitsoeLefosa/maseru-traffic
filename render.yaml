@@ -27,8 +27,14 @@ services:
       - key: SIMULATE_OTHER_INTERSECTIONS
         value: "true"
       # ---- messaging (set in the Render dashboard; "console" = only write messages to the log) ----
-      - key: SMS_PROVIDER          # console | twilio
+      - key: SMS_PROVIDER          # console | textbee | twilio
         sync: false
+      - key: TEXTBEE_API_KEY       # textbee.dev dashboard -> API keys
+        sync: false
+      - key: TEXTBEE_WEBHOOK_SECRET
+        sync: false
+      - key: SMS_DAILY_LIMIT       # textbee free plan: 50/day
+        value: "45"
       - key: WHATSAPP_PROVIDER     # console | meta | twilio
         sync: false
       - key: TWILIO_ACCOUNT_SID

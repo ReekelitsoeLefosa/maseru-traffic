@@ -363,6 +363,8 @@ def subscribe(body: Subscriber, request: Request):
               else notifier.send_sms(phone, text))
     if status != "sent":
         db.delete_pending(phone)
+        if status.startswith("skipped"):
+            raise HTTPException(503, "Today's SMS limit is used up. Choose WhatsApp, or try again tomorrow.")
         raise HTTPException(502, "Could not send the code. Check the number and try again.")
     return {"status": "code_sent", "phone": phone, "channel": "WhatsApp" if body.whatsapp else "SMS"}
 
@@ -498,15 +500,41 @@ async def twilio_sms(request: Request):
     """Replies to our SMS alerts. STOP turns SMS alerts off for that number; START turns them back on."""
     form = await request.form()
     _check_twilio(request, form)
-    phone, text = str(form.get("From", "")), str(form.get("Body", "")).strip().upper()
+    return _twiml(_sms_reply(str(form.get("From", "")), str(form.get("Body", ""))))
+
+
+def _sms_reply(phone: str, text: str) -> str | None:
+    """STOP turns SMS alerts off for that number; START turns them back on. Other texts get no answer
+    (every SMS we send costs money)."""
+    try:
+        phone = notifier.normalize_phone(phone)
+    except ValueError:
+        return None
+    text = text.strip().upper()
     db.log_alert(phone, "sms:in", None, text[:160], "received")
     if text in STOP_WORDS:
         db.set_sms(phone, False)
-        return _twiml("Maseru Traffic: you will no longer get SMS alerts. Reply START to turn them back on.")
+        return "Maseru Traffic: you will no longer get SMS alerts. Reply START to turn them back on."
     if text in START_WORDS and db.get_subscriber(phone):
         db.set_sms(phone, True)
-        return _twiml("Maseru Traffic: SMS alerts are on again. Reply STOP to end.")
-    return _twiml(None)       # other replies: no answer (each SMS we send costs money)
+        return "Maseru Traffic: SMS alerts are on again. Reply STOP to end."
+    return None
+
+
+@app.post("/webhooks/textbee")
+async def textbee_incoming(request: Request):
+    """SMS received by your textbee phone (event MESSAGE_RECEIVED), e.g. someone replying STOP."""
+    raw = await request.body()
+    if config.TEXTBEE_WEBHOOK_SECRET:
+        expected = hmac.new(config.TEXTBEE_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, request.headers.get("x-signature", "").lower()):
+            raise HTTPException(403, "Bad signature")
+    data = json.loads(raw or b"{}")
+    if data.get("webhookEvent", "MESSAGE_RECEIVED") == "MESSAGE_RECEIVED" and data.get("sender"):
+        reply = _sms_reply(str(data["sender"]), str(data.get("message", "")))
+        if reply:
+            await asyncio.to_thread(notifier.send_sms, notifier.normalize_phone(str(data["sender"])), reply)
+    return {"ok": True}
 
 
 @app.get("/webhooks/meta/whatsapp")

@@ -2,6 +2,7 @@
 
 Providers (set in .env / Render environment):
   console - print the message to the server log (default; no account needed)
+  textbee - SMS from your own Android phone's SIM (free textbee plan: 50/day) - cheapest SMS option
   twilio  - SMS (and WhatsApp sandbox for testing) through Twilio's REST API
   meta    - WhatsApp through Meta's WhatsApp Business Cloud API (recommended: cheapest)
 
@@ -51,6 +52,18 @@ def _twilio(to: str, body: str, sender: str) -> str:
     return r.json().get("sid", "")
 
 
+def _textbee(to: str, body: str) -> str:
+    """Send through your own Android phone (textbee app) - normal local SMS prices / your SMS bundle."""
+    payload = {"recipients": [to], "message": body}
+    if config.TEXTBEE_DEVICE_ID:
+        payload["deviceId"] = config.TEXTBEE_DEVICE_ID
+    r = httpx.post("https://api.textbee.dev/api/v1/gateway/send-sms", json=payload, timeout=20,
+                   headers={"x-api-key": config.TEXTBEE_API_KEY})
+    if r.status_code >= 400:
+        raise RuntimeError(f"textbee {r.status_code}: {r.text[:300]}")
+    return r.json().get("data", {}).get("smsBatchId", "")
+
+
 def _meta_post(payload: dict) -> str:
     url = f"https://graph.facebook.com/v21.0/{config.META_WA_PHONE_NUMBER_ID}/messages"
     r = httpx.post(url, json={"messaging_product": "whatsapp", **payload},
@@ -93,14 +106,26 @@ def gsm_text(text: str) -> str:
     return re.sub(r"[\[\]{}\\^|`]", "", text)
 
 
+def _sms_quota_left() -> bool:
+    if config.SMS_PROVIDER == "console" or config.SMS_DAILY_LIMIT <= 0:
+        return True
+    midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    return db.sms_sent_since(midnight) < config.SMS_DAILY_LIMIT
+
+
 def send_sms(phone: str, body: str, intersection_id: str | None = None) -> str:
     body = gsm_text(body)
     try:
-        if config.SMS_PROVIDER == "twilio":
-            _twilio(phone, body, config.TWILIO_SMS_FROM)
+        if not _sms_quota_left():
+            status = f"skipped: daily SMS limit ({config.SMS_DAILY_LIMIT}) reached"
         else:
-            print(f"[SMS -> {phone}] {body}")
-        status = "sent"
+            if config.SMS_PROVIDER == "textbee":
+                _textbee(phone, body)
+            elif config.SMS_PROVIDER == "twilio":
+                _twilio(phone, body, config.TWILIO_SMS_FROM)
+            else:
+                print(f"[SMS -> {phone}] {body}")
+            status = "sent"
     except Exception as exc:
         status = f"failed: {exc}"
     db.log_alert(phone, f"sms:{config.SMS_PROVIDER}", intersection_id, body, status)

@@ -44,7 +44,13 @@ SIMULATE_OTHER_INTERSECTIONS = _bool("SIMULATE_OTHER_INTERSECTIONS", True)
 
 # --- Notifications ---------------------------------------------------------
 # SMS_PROVIDER / WHATSAPP_PROVIDER: "console" (log only), "twilio", or "meta" (WhatsApp only)
-SMS_PROVIDER = (os.getenv("SMS_PROVIDER") or "console").strip().lower()
+SMS_PROVIDER = (os.getenv("SMS_PROVIDER") or "console").strip().lower()   # console | textbee | twilio
+# textbee (https://textbee.dev): your own Android phone sends the SMS from its SIM - free plan 50/day, 300/month
+TEXTBEE_API_KEY = os.getenv("TEXTBEE_API_KEY", "")
+TEXTBEE_DEVICE_ID = os.getenv("TEXTBEE_DEVICE_ID", "")           # optional: empty = your default phone
+TEXTBEE_WEBHOOK_SECRET = os.getenv("TEXTBEE_WEBHOOK_SECRET", "")  # signs incoming SMS (STOP replies)
+# Never send more SMS than this per day (textbee free plan allows 50). 0 = no limit.
+SMS_DAILY_LIMIT = int(os.getenv("SMS_DAILY_LIMIT") or "45")
 WHATSAPP_PROVIDER = (os.getenv("WHATSAPP_PROVIDER") or "console").strip().lower()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")

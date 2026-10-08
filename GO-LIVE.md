@@ -131,7 +131,25 @@ In Render → **Environment**, a provider set to `console` (or empty) only write
    (API Setup page) and `META_APP_SECRET` (App settings → Basic). Save.
 8. Test: send `hi` to your WhatsApp number - the bot answers with the menu.
 
-### SMS (Twilio) 👤
+### WhatsApp for free (school demo)
+Meta's **test number** (step 2 above) can message **up to 5 phones you add** under API Setup → "To".
+For a class demo that's enough and you don't need a real number or business verification.
+
+### SMS for (almost) free: your own Android phone with textbee 👤 (recommended for a school project)
+The server asks your Android phone to send the SMS from its own SIM - you pay normal local prices or use
+an SMS bundle, instead of ~US$0.41 per SMS. Free textbee plan: 50 SMS/day, 300/month (the app stops at
+`SMS_DAILY_LIMIT`, 45 by default, so you never go over).
+1. On an Android phone with a Vodacom/Econet SIM (and an SMS bundle), keep it charged and online.
+2. Sign up at https://textbee.dev → install the **textbee** app from the link they give → log in → allow
+   SMS permissions. The phone appears under **Devices**.
+3. Dashboard → **API keys** → create one.
+4. Replies (so STOP works): Dashboard → **Webhooks** → add `https://maseru-traffic.onrender.com/webhooks/textbee`,
+   event **MESSAGE_RECEIVED**; copy its **signing secret**.
+5. Render → **Environment**: `SMS_PROVIDER=textbee`, `TEXTBEE_API_KEY`, `TEXTBEE_WEBHOOK_SECRET`. Save.
+6. Test in the app as admin: **Alerts → Send test message**.
+Note: this is for small numbers of messages; a real city-wide service needs a proper SMS provider.
+
+### SMS (Twilio, paid) 👤
 1. https://www.twilio.com → sign up. The free trial can only text numbers you verify first; **upgrade**
    (add credit) to text anyone.
 2. Buy a number with SMS (**Phone Numbers → Buy a number**). Check Twilio's *Lesotho* guidelines page for

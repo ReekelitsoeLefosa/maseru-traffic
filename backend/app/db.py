@@ -26,8 +26,8 @@ def _connect():
 
 
 def _sql(sql: str) -> str:
-    """Our SQL is written for SQLite; PostgreSQL uses %s placeholders."""
-    return sql.replace("?", "%s") if PG else sql
+    """Our SQL is written for SQLite; PostgreSQL uses %s placeholders (and a literal % must be doubled)."""
+    return sql.replace("%", "%%").replace("?", "%s") if PG else sql
 
 
 _conn = _connect()
@@ -216,6 +216,12 @@ def list_subscribers(active_only=True) -> list[dict]:
 
 def set_sms(phone, enabled: bool):
     execute("UPDATE subscribers SET sms=? WHERE phone=?", (int(enabled), phone))
+
+
+def sms_sent_since(ts: float) -> int:
+    rows = query("SELECT COUNT(*) AS n FROM alerts WHERE channel LIKE 'sms:%' AND channel <> 'sms:in' "
+                 "AND channel <> 'sms:console' AND status='sent' AND ts >= ?", (ts,))
+    return int(rows[0]["n"])
 
 
 def last_inbound_ts(phone) -> float:
