@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -157,10 +157,19 @@ def current_jpeg(iid: str) -> bytes | None:
 
 # ----------------------------------------------------------------- traffic
 
+@app.exception_handler(db.DatabaseUnavailable)
+async def database_down(request: Request, exc: db.DatabaseUnavailable):
+    return JSONResponse({"detail": "The database can't be reached right now. Please try again in a minute."},
+                        status_code=503)
+
+
 @app.get("/healthz")
 def healthz():
-    """Tiny check for Render and uptime monitors (UptimeRobot pings keep the free plan awake)."""
-    return {"ok": True, "cameras_online": sum(1 for r in remote_cams.values() if time.time() - r["last"] < REMOTE_TIMEOUT)}
+    """Tiny check for Render and uptime monitors (UptimeRobot pings keep the free plan awake).
+    Always 200 while the server runs (Render restarts services whose health check fails), with the
+    database status inside so problems are visible."""
+    return {"ok": True, "database": db.status(),
+            "cameras_online": sum(1 for r in remote_cams.values() if time.time() - r["last"] < REMOTE_TIMEOUT)}
 
 
 @app.get("/api/meta")

@@ -15,11 +15,20 @@ _lock = threading.Lock()
 PG = config.DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
 
+class DatabaseUnavailable(Exception):
+    """The database can't be reached right now (e.g. Neon down or DATABASE_URL wrong)."""
+
+
+_conn = None            # opened on first use, so the server starts even when the database is down
+_last_error = None      # shown on /healthz
+_last_warning = 0.0
+
+
 def _connect():
     if PG:
         import psycopg
         from psycopg.rows import dict_row
-        return psycopg.connect(config.DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=15)
+        return psycopg.connect(config.DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=10)
     conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -28,9 +37,6 @@ def _connect():
 def _sql(sql: str) -> str:
     """Our SQL is written for SQLite; PostgreSQL uses %s placeholders (and a literal % must be doubled)."""
     return sql.replace("%", "%%").replace("?", "%s") if PG else sql
-
-
-_conn = _connect()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS crossings (
@@ -103,47 +109,92 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 """
 
-def _create_schema():
+def _create_schema(conn):
     if PG:
         ddl = (SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
                      .replace(" REAL", " DOUBLE PRECISION"))   # PostgreSQL REAL is too coarse for timestamps
         for stmt in ddl.split(";"):
             if stmt.strip():
-                _conn.execute(stmt)
+                conn.execute(stmt)
     else:
-        _conn.executescript(SCHEMA)
-        _conn.commit()
+        conn.executescript(SCHEMA)
+        conn.commit()
 
 
-with _lock:
-    _create_schema()
+_last_fail = 0.0
+RETRY_SECONDS = 30      # while the database is down, try to reconnect at most this often
+
+
+def _open():
+    """(Re)connect and make sure the tables exist. Caller holds _lock."""
+    global _conn, _last_error, _last_fail
+    if _last_error and time.time() - _last_fail < RETRY_SECONDS:
+        raise DatabaseUnavailable(_last_error)          # don't make every request wait for a timeout
+    try:
+        conn = _connect()
+        _create_schema(conn)
+    except Exception as exc:
+        _conn = None
+        _last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        _last_fail = time.time()
+        raise DatabaseUnavailable(_last_error) from exc
+    _conn, _last_error = conn, None
+    return conn
 
 
 def _run(fn):
-    """Run a database call; reconnect once if the server dropped the connection (Neon idles them)."""
+    """Run a database call. Connects on first use and reconnects once if the connection was dropped
+    (Neon closes idle ones). Raises DatabaseUnavailable if the database can't be reached."""
     global _conn
     with _lock:
+        conn = _conn or _open()
         try:
-            return fn(_conn)
+            return fn(conn)
         except Exception as exc:
-            lost = "closed" in str(exc).lower() or "connection" in str(exc).lower()
-            if not (PG and lost):
+            lost = PG and ("closed" in str(exc).lower() or "connection" in str(exc).lower())
+            if not lost:
                 raise
-            _conn = _connect()
-            return fn(_conn)
+            _conn = None
+            return fn(_open())
 
 
 def execute(sql: str, params: tuple = ()):
+    """Writes. If the database is down, log it and carry on, so counting and the live view keep running."""
+    global _last_warning
+
     def go(conn):
         cur = conn.execute(_sql(sql), params)
         if not PG:
             conn.commit()
         return cur.rowcount
-    return _run(go)
+    try:
+        return _run(go)
+    except DatabaseUnavailable as exc:
+        if time.time() - _last_warning > 60:
+            _last_warning = time.time()
+            print(f"[db] database unreachable, data not saved: {exc}")
+        return 0
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
+    """Reads. Raises DatabaseUnavailable if the database can't be reached (the API answers 503)."""
     return _run(lambda conn: [dict(r) for r in conn.execute(_sql(sql), params).fetchall()])
+
+
+def status() -> dict:
+    """For /healthz: can we reach the database right now?"""
+    try:
+        query("SELECT 1 AS ok")
+        return {"ok": True, "kind": "postgresql" if PG else "sqlite"}
+    except Exception as exc:
+        return {"ok": False, "kind": "postgresql" if PG else "sqlite", "error": _last_error or str(exc)[:200]}
+
+
+try:                     # connect now if we can, but never stop the server from starting
+    with _lock:
+        _open()
+except DatabaseUnavailable as exc:
+    print(f"[db] database not reachable at startup, will keep retrying: {exc}")
 
 
 # --- Crossings & windows ---------------------------------------------------
