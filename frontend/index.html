@@ -174,6 +174,17 @@
       <h3>Message log <small class="muted" id="providers"></small></h3>
       <ul id="alertLog" class="list log"></ul>
     </div>
+    <div class="card" id="adminCard">
+      <h3>Admin</h3>
+      <form id="adminForm" class="row non-admin-only">
+        <input id="adminKey" type="password" autocomplete="off" placeholder="Admin key (ADMIN_TOKEN)">
+        <button>Sign in</button>
+      </form>
+      <div class="row admin-only">
+        <span class="muted small">You are signed in as admin on this device.</span>
+        <button id="adminSignOut" type="button" class="ghost small">Sign out</button>
+      </div>
+    </div>
   </section>
 
   <!-- BOT -->

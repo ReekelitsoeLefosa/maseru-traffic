@@ -68,17 +68,34 @@ function selectIntersection(id) {
   $("#video").src = hasCam ? `/api/cameras/${id}/stream?t=${Date.now()}` : "";
   $("#video").classList.toggle("hidden", !hasCam);
   $("#noVideo").classList.toggle("hidden", hasCam);
-  $("#editLines").classList.toggle("hidden", !META.local_cameras.includes(id) || !META.admin);
+  const editable = (META.editable_cameras || []).includes(id);   // on this PC, or on the connected PC (online)
+  $("#editLines").classList.toggle("hidden", !editable);
   $("#videoAdmin").classList.toggle("hidden", !META.can_upload_video);
-  $("#removeVideo").classList.toggle("hidden", !META.local_cameras.includes(id));
-  $("#uploadVideo").textContent = META.local_cameras.includes(id) ? "⬆ Replace video" : "⬆ Upload video for this junction";
+  $("#removeVideo").classList.toggle("hidden", !editable);
+  $("#uploadVideo").textContent = hasCam ? "⬆ Replace video" : "⬆ Upload video for this junction";
   $("#uploadMsg").textContent = "";
   stopEditing();
   loadHistory();
   if (SNAP[id]) render();
 }
 
-// ------------------------------------------------- upload a video (admin, Windows app)
+// ------------------------------------------------------- admin sign-in (phones)
+// The phone app can't open "?admin=KEY" links, so the key can be typed once in the Alerts tab.
+$("#adminForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = $("#adminKey").value.trim();
+  if (!key) return;
+  const r = await fetch("/api/meta", { headers: { "X-Admin-Token": key } }).then((x) => x.json()).catch(() => ({}));
+  if (!r.admin) { alert("That admin key is not correct."); return; }
+  store.set("adminToken", key);
+  location.reload();
+});
+$("#adminSignOut").addEventListener("click", () => {
+  store.set("adminToken", "");
+  location.reload();
+});
+
+// ------------------------------------------------- upload a video (admin)
 async function refreshMeta() {
   META = await api("/api/meta");
   for (const o of $("#intersection").options) {
@@ -87,11 +104,46 @@ async function refreshMeta() {
   }
 }
 
+// Online (cloud server) the PC does the work: follow the job until the PC reports back.
+const JOB_TEXT = {
+  waiting: "Uploaded. Waiting for your PC to collect it…",
+  sent: "Your PC has seen the job…",
+  downloading: "Your PC is downloading the video…",
+};
+async function followJob(jobId, iid, onDone) {
+  const until = Date.now() + 15 * 60 * 1000;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 4000));
+    let job;
+    try { job = (await api("/api/jobs")).find((j) => j.id === jobId); } catch { continue; }
+    if (!job) break;
+    if (job.status === "failed") { $("#uploadMsg").textContent = "❌ Your PC could not do it: " + job.error; return; }
+    if (job.status === "done") {
+      for (let i = 0; i < 6; i++) {                       // wait for the PC's next report to arrive
+        await refreshMeta();
+        if (job.action !== "video" || META.cameras.includes(iid)) break;
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+      if (selected === iid) selectIntersection(iid);
+      onDone(job);
+      return;
+    }
+    if (selected === iid) $("#uploadMsg").textContent = JOB_TEXT[job.status] || job.status;
+  }
+  $("#uploadMsg").textContent = "⏳ Your PC hasn't finished yet. Check that the Maseru Smart Traffic app is running on it.";
+}
+
 $("#uploadVideo").addEventListener("click", () => $("#videoFile").click());
 $("#videoFile").addEventListener("change", () => {
   const file = $("#videoFile").files[0];
   if (!file) return;
   const iid = selected, name = META.places.find((p) => p.id === iid).name;
+  if (META.max_upload_mb && file.size > META.max_upload_mb * 1e6) {
+    $("#uploadMsg").textContent = `❌ This video is ${(file.size / 1e6).toFixed(0)} MB; the limit here is ` +
+      `${META.max_upload_mb} MB. Use a shorter clip, or upload it in the app on the PC.`;
+    $("#videoFile").value = "";
+    return;
+  }
   const form = new FormData();
   form.append("file", file);
   const xhr = new XMLHttpRequest();            // XHR rather than fetch: it reports upload progress
@@ -116,6 +168,17 @@ $("#videoFile").addEventListener("change", () => {
       $("#uploadMsg").textContent = "❌ " + (body.detail || `Upload failed (${xhr.status})`);
       return;
     }
+    if (body.queued) {                                  // online: the PC analyses it
+      $("#uploadMsg").textContent = JOB_TEXT.waiting;
+      followJob(body.job, iid, (job) => {
+        const s = job.info?.seconds || 0;
+        $("#uploadMsg").textContent = `✅ Your PC is analysing the video at ${name}` +
+          (s ? ` (${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} min)` : "") +
+          `. Draw counting lines across the road below. Online, the picture updates every few seconds.`;
+        setTimeout(() => $("#editLines").click(), 4000);
+      });
+      return;
+    }
     await refreshMeta();
     selectIntersection(iid);
     const mins = Math.floor(body.seconds / 60), secs = body.seconds % 60;
@@ -135,10 +198,16 @@ $("#videoFile").addEventListener("change", () => {
 $("#removeVideo").addEventListener("click", async () => {
   const name = META.places.find((p) => p.id === selected).name;
   if (!confirm(`Stop analysing the video at ${name}? It goes back to simulated traffic. The video file is kept.`)) return;
+  const iid = selected;
   try {
-    await api(`/api/cameras/${selected}`, { method: "DELETE" });
+    const r = await api(`/api/cameras/${iid}`, { method: "DELETE" });
+    if (r.queued) {
+      $("#uploadMsg").textContent = "Asking your PC to stop the video…";
+      followJob(r.job, iid, () => ($("#uploadMsg").textContent = `${name} is back to simulated traffic.`));
+      return;
+    }
     await refreshMeta();
-    selectIntersection(selected);
+    selectIntersection(iid);
     $("#uploadMsg").textContent = `${name} is back to simulated traffic.`;
   } catch (err) { $("#uploadMsg").textContent = "❌ " + err.message; }
 });
@@ -420,8 +489,13 @@ $("#video").addEventListener("click", (e) => {
   drawDraft();
 });
 $("#saveLines").addEventListener("click", async () => {
-  await api(`/api/cameras/${selected}/lines`, { method: "PUT", body: JSON.stringify(draftLines) });
-  stopEditing();
+  try {
+    const r = await api(`/api/cameras/${selected}/lines`, { method: "PUT", body: JSON.stringify(draftLines) });
+    stopEditing();
+    $("#uploadMsg").textContent = r.queued
+      ? "✅ Lines saved. Your PC applies them within a few seconds."
+      : "✅ Counting lines saved.";
+  } catch (err) { $("#uploadMsg").textContent = "❌ " + err.message; }
 });
 $("#clearLines").addEventListener("click", () => { draftLines = []; pendingPoint = null; drawDraft(); });
 

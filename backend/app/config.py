@@ -94,6 +94,8 @@ CLOUD_URL = os.getenv("CLOUD_URL", "")
 STATION_KEY = os.getenv("STATION_KEY", "")
 FRAME_UPLOAD_SECONDS = float(os.getenv("FRAME_UPLOAD_SECONDS", "3"))   # how often to send a video snapshot
 FRAME_UPLOAD_WIDTH = int(os.getenv("FRAME_UPLOAD_WIDTH", "640"))
+# Treat this server as having no AI (like the cloud server) even if the packages are installed - for testing.
+AI_DISABLED = _bool("AI_DISABLED", False)
 
 
 def public_url() -> str:
@@ -105,10 +107,12 @@ def public_url() -> str:
         return ""
 
 
+CAMERAS_PATH = ROOT / os.getenv("CAMERAS_FILE", "cameras.json")   # an absolute CAMERAS_FILE is used as is
+
+
 def load_cameras() -> list[dict]:
     """cameras.json maps camera feeds (video file, RTSP URL or webcam index) to intersections."""
-    path = ROOT / os.getenv("CAMERAS_FILE", "cameras.json")
-    if not path.exists():
+    if not CAMERAS_PATH.exists():
         return []
-    with open(path, encoding="utf-8") as f:
+    with open(CAMERAS_PATH, encoding="utf-8") as f:
         return json.load(f)
