@@ -43,6 +43,9 @@ body:not(.is-admin) .admin-only { display: none !important; }
 body:not(.is-native) .native-only { display: none !important; }
 body.is-native #installBtn { display: none !important; }   /* already an installed app */
 #nearMe { margin-top: 4px; }
+.video-admin { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.video-admin .progress { margin: 6px 0; height: 8px; }
+.video-admin .progress div { background: var(--brand); transition: width .2s linear; }
 .qr { background: #fff; padding: 10px; border-radius: 10px; width: max-content; margin: 8px 0; }
 .share-url { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
 select, input, button { font: inherit; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); min-width: 0; }

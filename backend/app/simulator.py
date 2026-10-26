@@ -71,3 +71,9 @@ class Simulator(threading.Thread):
         """A real camera (local or a remote station) now covers this junction."""
         if iid in self.ids:
             self.ids = [i for i in self.ids if i != iid]
+
+    def start_simulating(self, iid: str):
+        """The junction's camera/video was removed: show simulated traffic there again."""
+        if iid not in self.ids:
+            self.local.setdefault(iid, random.uniform(0.8, 1.25))
+            self.ids = self.ids + [iid]

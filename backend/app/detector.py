@@ -145,7 +145,10 @@ class CameraWorker(threading.Thread):
             raw = frame.copy()   # colour checks must not see boxes drawn on earlier vehicles
             h, w = frame.shape[:2]
             self.frame_size = (w, h)
-            res = model.track(frame, persist=True, conf=config.DETECT_CONF, imgsz=config.DETECT_IMGSZ,
+            # enlarging a small video (e.g. 552 px wide) to 960 px adds no detail but halves the frame rate,
+            # and a higher frame rate matters more: the tracker loses fewer vehicles between frames
+            imgsz = config.DETECT_IMGSZ if w > 800 else min(config.DETECT_IMGSZ, 640)
+            res = model.track(frame, persist=True, conf=config.DETECT_CONF, imgsz=imgsz,
                               classes=classes, tracker=TRACKER_CFG, verbose=False)[0]
             now = time.time()
             visible = 0

@@ -13,7 +13,9 @@ import time
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -184,6 +186,7 @@ def meta(request: Request):
         "roads": [{k: e[k] for k in ("from", "to", "road", "km", "geometry")} for e in ROADS],
         "cameras": camera_ids(),
         "local_cameras": list(cameras),     # counting lines can only be edited where the camera is attached
+        "can_upload_video": admin and ai_available(),
         "providers": {"sms": config.SMS_PROVIDER, "whatsapp": config.WHATSAPP_PROVIDER},
         "uplink": uplink.status if (admin and uplink) else None,
     }
@@ -332,6 +335,87 @@ def set_lines(iid: str, lines: list[Line]):
     _save_cameras()
     return cameras[iid].lines
 
+
+# ---------------------------------------------- upload a video for a junction (presentations)
+
+VIDEO_TYPES = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv"}
+MAX_VIDEO_MB = 2048
+DEFAULT_LINES = [{"approach": "N", "points": [0.05, 0.70, 0.95, 0.70], "count_direction": "both"}]
+
+
+def ai_available() -> bool:
+    """Video analysis needs the AI packages (installed on the Windows app PC, not on the cloud server)."""
+    try:
+        import cv2  # noqa: F401
+        import ultralytics  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _stop_camera(iid: str):
+    w = cameras.pop(iid, None)
+    if w:
+        w.stop()
+
+
+@app.post("/api/cameras/{iid}/video", dependencies=[Depends(require_admin)])
+async def upload_video(iid: str, file: UploadFile = File(...)):
+    """Use an uploaded video as this junction's camera: the AI starts counting it straight away."""
+    if iid not in INTERSECTIONS:
+        raise HTTPException(404, "Unknown intersection")
+    if not ai_available():
+        raise HTTPException(400, "Video analysis needs the AI packages; use the Windows app on the PC.")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in VIDEO_TYPES:
+        raise HTTPException(400, f"Please upload a video file ({', '.join(sorted(VIDEO_TYPES))})")
+    folder = config.ROOT / "videos"
+    folder.mkdir(exist_ok=True)
+    dest = folder / f"{iid}_{time.strftime('%Y%m%d-%H%M%S')}{ext}"
+    size = 0
+    with open(dest, "wb") as out:                          # stream to disk: videos can be large
+        while chunk := await file.read(1 << 20):
+            size += len(chunk)
+            if size > MAX_VIDEO_MB << 20:
+                out.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(413, f"Video is larger than {MAX_VIDEO_MB} MB")
+            out.write(chunk)
+
+    import cv2
+    cap = cv2.VideoCapture(str(dest))
+    ok, frame = cap.read()
+    info = {"seconds": round(cap.get(cv2.CAP_PROP_FRAME_COUNT) / (cap.get(cv2.CAP_PROP_FPS) or 25)),
+            "width": int(cap.get(3)), "height": int(cap.get(4))}
+    cap.release()
+    if not ok:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "This video can't be read. Try converting it to MP4 (H.264).")
+
+    from .detector import CameraWorker
+    _stop_camera(iid)
+    worker = CameraWorker({"intersection_id": iid, "source": str(dest), "loop": True,
+                           "lines": [dict(l) for l in DEFAULT_LINES]})
+    cameras[iid] = worker
+    worker.start()
+    if simulator:
+        simulator.stop_simulating(iid)
+    _save_cameras()
+    return {"ok": True, "file": dest.name, "megabytes": round(size / 1e6, 1), **info,
+            "cameras_running": len(cameras)}
+
+
+@app.delete("/api/cameras/{iid}", dependencies=[Depends(require_admin)])
+def remove_camera(iid: str):
+    """Stop using a video/camera at this junction; it goes back to simulated traffic."""
+    if iid not in cameras:
+        raise HTTPException(404, "No camera at this intersection")
+    _stop_camera(iid)
+    analytics.set_source(iid, "simulated")
+    if simulator:
+        simulator.start_simulating(iid)
+    _save_cameras()
+    return {"ok": True}
 
 # ------------------------------------------------------------ subscribers
 

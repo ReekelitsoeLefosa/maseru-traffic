@@ -64,14 +64,84 @@ function selectIntersection(id) {
   selected = id;
   $("#intersection").value = id;
   const hasCam = META.cameras.includes(id);
-  $("#video").src = hasCam ? `/api/cameras/${id}/stream` : "";
+  // a new query string makes the browser open a fresh stream (e.g. after a new video was uploaded)
+  $("#video").src = hasCam ? `/api/cameras/${id}/stream?t=${Date.now()}` : "";
   $("#video").classList.toggle("hidden", !hasCam);
   $("#noVideo").classList.toggle("hidden", hasCam);
   $("#editLines").classList.toggle("hidden", !META.local_cameras.includes(id) || !META.admin);
+  $("#videoAdmin").classList.toggle("hidden", !META.can_upload_video);
+  $("#removeVideo").classList.toggle("hidden", !META.local_cameras.includes(id));
+  $("#uploadVideo").textContent = META.local_cameras.includes(id) ? "⬆ Replace video" : "⬆ Upload video for this junction";
+  $("#uploadMsg").textContent = "";
   stopEditing();
   loadHistory();
   if (SNAP[id]) render();
 }
+
+// ------------------------------------------------- upload a video (admin, Windows app)
+async function refreshMeta() {
+  META = await api("/api/meta");
+  for (const o of $("#intersection").options) {
+    const p = META.places.find((pl) => pl.id === o.value);
+    o.textContent = p.name + (META.cameras.includes(p.id) ? " 📹" : "");
+  }
+}
+
+$("#uploadVideo").addEventListener("click", () => $("#videoFile").click());
+$("#videoFile").addEventListener("change", () => {
+  const file = $("#videoFile").files[0];
+  if (!file) return;
+  const iid = selected, name = META.places.find((p) => p.id === iid).name;
+  const form = new FormData();
+  form.append("file", file);
+  const xhr = new XMLHttpRequest();            // XHR rather than fetch: it reports upload progress
+  xhr.open("POST", `/api/cameras/${iid}/video`);
+  if (ADMIN_TOKEN) xhr.setRequestHeader("X-Admin-Token", ADMIN_TOKEN);
+  $("#uploadProgress").classList.remove("hidden");
+  $("#uploadBar").style.width = "0%";
+  $("#uploadVideo").disabled = true;
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((100 * e.loaded) / e.total);
+    $("#uploadBar").style.width = pct + "%";
+    $("#uploadMsg").textContent = `Uploading ${file.name}: ${pct}% of ${(e.total / 1e6).toFixed(0)} MB`;
+  };
+  xhr.onload = async () => {
+    $("#uploadVideo").disabled = false;
+    $("#uploadProgress").classList.add("hidden");
+    $("#videoFile").value = "";
+    let body = {};
+    try { body = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+    if (xhr.status !== 200) {
+      $("#uploadMsg").textContent = "❌ " + (body.detail || `Upload failed (${xhr.status})`);
+      return;
+    }
+    await refreshMeta();
+    selectIntersection(iid);
+    const mins = Math.floor(body.seconds / 60), secs = body.seconds % 60;
+    $("#uploadMsg").textContent = `✅ ${name} is now analysing your video (${mins}:${String(secs).padStart(2, "0")} min, ` +
+      `${body.width}×${body.height}). Draw counting lines across the road below.` +
+      (body.cameras_running > 2 ? ` ${body.cameras_running} videos are running: each will be slower on this PC.` : "");
+    setTimeout(() => $("#editLines").click(), 1500);  // open the line editor once the first frame arrives
+  };
+  xhr.onerror = () => {
+    $("#uploadVideo").disabled = false;
+    $("#uploadProgress").classList.add("hidden");
+    $("#uploadMsg").textContent = "❌ Upload failed: is the app still running?";
+  };
+  xhr.send(form);
+});
+
+$("#removeVideo").addEventListener("click", async () => {
+  const name = META.places.find((p) => p.id === selected).name;
+  if (!confirm(`Stop analysing the video at ${name}? It goes back to simulated traffic. The video file is kept.`)) return;
+  try {
+    await api(`/api/cameras/${selected}`, { method: "DELETE" });
+    await refreshMeta();
+    selectIntersection(selected);
+    $("#uploadMsg").textContent = `${name} is back to simulated traffic.`;
+  } catch (err) { $("#uploadMsg").textContent = "❌ " + err.message; }
+});
 
 // ------------------------------------------------------------- live feed
 function connect() {

@@ -39,7 +39,7 @@
       <div class="video-wrap" id="videoWrap">
         <img id="video" alt="Live annotated camera feed">
         <svg id="lineOverlay" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
-        <div id="noVideo" class="no-video">No camera at this junction — showing <b>simulated</b> traffic.<br>Attach a camera in <code>cameras.json</code>.</div>
+        <div id="noVideo" class="no-video">No camera at this junction: showing <b>simulated</b> traffic.<span class="admin-only"><br>Upload a video below to analyse this junction.</span></div>
       </div>
       <div class="video-bar">
         <span id="camStatus" class="muted"></span>
@@ -53,6 +53,15 @@
         </div>
         <ul id="lineList"></ul>
         <div class="row"><button id="saveLines">Save lines</button><button id="clearLines" class="ghost">Clear</button></div>
+      </div>
+      <div id="videoAdmin" class="video-admin hidden">
+        <input id="videoFile" type="file" accept="video/*,.mp4,.avi,.mov,.mkv,.m4v,.wmv" hidden>
+        <div class="row">
+          <button id="uploadVideo" type="button" class="small">⬆ Upload video for this junction</button>
+          <button id="removeVideo" type="button" class="ghost small hidden">Remove video</button>
+        </div>
+        <div id="uploadProgress" class="progress hidden"><div id="uploadBar"></div></div>
+        <small id="uploadMsg" class="muted"></small>
       </div>
     </div>
 
