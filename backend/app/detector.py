@@ -76,6 +76,13 @@ class CameraWorker(threading.Thread):
         self._prev_side.clear()
         self._counted.clear()
 
+    def _ignored(self, box, w, h) -> bool:
+        """Ignore zones (cameras.json "ignore": [[x1, y1, x2, y2], ...], fractions of the frame) cover things
+        the model keeps mistaking for vehicles, e.g. a green bin on the pavement. A detection is dropped when
+        its box centre lies inside a zone, so a real car only brushing the zone is still counted."""
+        cx, cy = (box[0] + box[2]) / 2 / w, (box[1] + box[3]) / 2 / h
+        return any(x1 <= cx <= x2 and y1 <= cy <= y2 for x1, y1, x2, y2 in self.cfg.get("ignore", []))
+
     # --------------------------------------------------------- classification
     def _categorise(self, cls_id: int, names: dict, custom: bool, box, frame) -> str | None:
         if custom:
@@ -158,6 +165,8 @@ class CameraWorker(threading.Thread):
             if res.boxes is not None and res.boxes.id is not None:
                 for box, cls_id, tid in zip(res.boxes.xyxy.cpu().numpy(), res.boxes.cls.cpu().numpy().astype(int),
                                             res.boxes.id.cpu().numpy().astype(int)):
+                    if self._ignored(box, w, h):
+                        continue
                     cat = self._categorise(int(cls_id), names, custom, box, raw)
                     if cat is None:
                         continue
@@ -203,6 +212,8 @@ class CameraWorker(threading.Thread):
                 analytics.record_occupancy(self.iid, visible)
                 last_occ = now
 
+            for x1, y1, x2, y2 in self.cfg.get("ignore", []):   # grey dashed-look box = ignored area
+                cv2.rectangle(frame, (int(x1 * w), int(y1 * h)), (int(x2 * w), int(y2 * h)), (128, 128, 128), 1)
             for p1, p2, line in lines_px:
                 cv2.line(frame, tuple(map(int, p1)), tuple(map(int, p2)), (0, 0, 255), 3)
                 label = f"{line.get('approach', '?')}: {self.line_counts[line.get('approach', '?')]}"
