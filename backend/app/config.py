@@ -36,6 +36,12 @@ DETECT_IMGSZ = int(os.getenv("DETECT_IMGSZ", "960"))
 FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "2"))
 # Heuristic to split "car" detections into minibus taxis when using the stock COCO model.
 MINIBUS_HEURISTIC = _bool("MINIBUS_HEURISTIC", True)
+# Vehicle-type classifier trained on Maseru pictures (tools/train_classifier.py). Used when the file exists;
+# the rules above are the fallback when it is unsure. Set to "" to switch it off.
+VEHICLE_CLS_MODEL = os.getenv("VEHICLE_CLS_MODEL", "models/vehicle_types_cls.pt")
+if VEHICLE_CLS_MODEL and not Path(VEHICLE_CLS_MODEL).is_absolute():
+    VEHICLE_CLS_MODEL = str(ROOT / VEHICLE_CLS_MODEL)
+VEHICLE_CLS_CONF = float(os.getenv("VEHICLE_CLS_CONF", "0.6"))
 
 # --- Analytics -------------------------------------------------------------
 WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "300"))  # 5-minute counting window

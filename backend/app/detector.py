@@ -20,7 +20,7 @@ import numpy as np
 
 from . import config
 from .analytics import CATEGORIES, CATEGORY_LABELS, analytics
-from .vehicle_types import COCO_MAP, TypeClassifier, is_maseru_model
+from .vehicle_types import COCO_MAP, CropClassifier, TypeClassifier, is_maseru_model
 
 TRACKER_CFG = str(Path(__file__).with_name("bytetrack_maseru.yaml"))
 COLORS = {
@@ -102,6 +102,13 @@ class CameraWorker(threading.Thread):
 
         names = model.names
         custom = is_maseru_model(names)
+        crop_cls = None
+        if not custom and config.VEHICLE_CLS_MODEL and Path(config.VEHICLE_CLS_MODEL).exists():
+            try:
+                crop_cls = CropClassifier(config.VEHICLE_CLS_MODEL)
+                self.status["model"] += " + Maseru types"
+            except Exception as exc:          # a broken file must not stop the camera; the rules still work
+                print(f"[camera {self.iid}] vehicle-type model not loaded: {exc}")
         classes = None if custom else list(COCO_MAP)
         analytics.set_source(self.iid, "camera")
 
@@ -163,13 +170,24 @@ class CameraWorker(threading.Thread):
                         for l in self.lines]
 
             if res.boxes is not None and res.boxes.id is not None:
-                for box, cls_id, tid in zip(res.boxes.xyxy.cpu().numpy(), res.boxes.cls.cpu().numpy().astype(int),
-                                            res.boxes.id.cpu().numpy().astype(int)):
+                xyxy = res.boxes.xyxy.cpu().numpy()
+                cls_ids = res.boxes.cls.cpu().numpy().astype(int)
+                # the trained model judges cars/buses/trucks (it has no motorcycle pictures yet)
+                learned = [None] * len(xyxy)
+                if crop_cls is not None:
+                    judge = [k for k, c in enumerate(cls_ids) if COCO_MAP.get(int(c)) != "motorcycle"]
+                    for k, r in zip(judge, crop_cls.predict(raw, [xyxy[k] for k in judge])):
+                        learned[k] = r
+                for k, (box, cls_id, tid) in enumerate(zip(xyxy, cls_ids, res.boxes.id.cpu().numpy().astype(int))):
                     if self._ignored(box, w, h):
                         continue
-                    cat = self._categorise(int(cls_id), names, custom, box, raw)
+                    cat = self._categorise(int(cls_id), names, custom, box, raw)   # rules (also learn sizes)
                     if cat is None:
                         continue
+                    if learned[k] and learned[k][1] >= config.VEHICLE_CLS_CONF:
+                        if learned[k][0] == "not_vehicle":
+                            continue        # a bin, umbrella or stall the detector took for a car
+                        cat = learned[k][0]
                     visible += 1
                     votes = self._track_cats.setdefault(tid, Counter())
                     votes[cat] += 1

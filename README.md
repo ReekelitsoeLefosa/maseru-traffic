@@ -120,10 +120,26 @@ To add a junction, add a line to `JUNCTIONS` in that script (an anchor point nea
 and run `python tools/build_network.py`.
 
 ## Vehicle types: taxis and buses
-**Live detection today** uses the standard YOLOv8 model plus Maseru rules (`backend/app/vehicle_types.py`):
-4+1 cabs are recognised by the **yellow belt** along their sides, minibus taxis by size.
+**Live detection** finds vehicles with the standard YOLOv8 model, then a small classifier trained on
+**hand-checked Maseru pictures** (`models/vehicle_types_cls.pt`) names each one: private car, 4+1 cab,
+minibus taxi, bus, truck, or *not a vehicle* (bins, umbrellas, stalls — these are dropped). When it is
+unsure (< 60 %), the rules in `backend/app/vehicle_types.py` decide: 4+1 cabs by the **yellow belt** (or
+all-yellow paint), minibus taxis by being ~1.3× taller than a car at the same spot in the picture.
 
-**Custom model (first round, not yet used live).** `train_custom_model.py` auto-labelled 339 frames
+Trained on 778 vehicles from the Lekhaloaneng and Main Circle ETL webcams (Nov 2026). On 415 test
+pictures of vehicles it never saw: 94 % correct overall — minibus taxis 71 % found (rules: 29 %), and
+when it says "minibus" it is right 17 of 18 times (rules: 7 of 58); 4+1 cabs 96 % (rules: 36 %).
+Weak spots: only 5 buses and no motorcycles in the pictures yet (motorcycles come straight from YOLO).
+
+**Retrain with new videos:**
+```
+python tools/extract_crops.py "path/to/video1.mp4" "path/to/video2.mp4"   # cut out every vehicle
+python tools/sort_crops.py          # pictures into datasets/crops/sorted/<type>/ (rules' first guess)
+#   → open those folders in File Explorer and drag wrong pictures into the right folder
+python tools/train_classifier.py    # train + test; restart the app to use the new model
+```
+
+**Full custom detector (first round, not used live).** `train_custom_model.py` auto-labelled 339 frames
 from the Main Circle and Lekhaloaneng videos with those rules and trained a model
 (`runs/detect/maseru/weights/best.pt`). Validation mAP50: 4+1 cab 0.89, private car 0.73,
 minibus 0.42, bus/truck ≈ 0 (too few examples). It copied the rules' mistakes (e.g. a fuel tanker

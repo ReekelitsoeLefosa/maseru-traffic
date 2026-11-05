@@ -67,6 +67,37 @@ MIN_SIZE_SAMPLES = 150      # car boxes needed before the camera's perspective i
 MIN_JUDGE_PX = 40           # far-away vehicles are too few pixels (and too often half-hidden) to size up
 
 
+class CropClassifier:
+    """Model trained on Maseru vehicle pictures (tools/train_classifier.py): looks at each vehicle the detector
+    found and names its type, or says "not_vehicle" (bins, umbrellas, stalls the detector mistakes for cars)."""
+
+    MIN_H = 28   # px; same limit as the training pictures
+
+    def __init__(self, path: str):
+        from ultralytics import YOLO
+        self.model = YOLO(path, task="classify")
+        self.names = self.model.names
+
+    def predict(self, frame, boxes) -> list[tuple[str, float] | None]:
+        H, W = frame.shape[:2]
+        crops, idx = [], []
+        for k, box in enumerate(boxes):
+            x1, y1, x2, y2 = (int(v) for v in box)
+            if y2 - y1 < self.MIN_H:
+                continue        # too small to judge; the rules decide
+            px, py = int(0.06 * (x2 - x1)), int(0.06 * (y2 - y1))   # same margin as the training pictures
+            crop = frame[max(0, y1 - py): min(H, y2 + py), max(0, x1 - px): min(W, x2 + px)]
+            if crop.size:
+                crops.append(crop)
+                idx.append(k)
+        out: list = [None] * len(boxes)
+        if crops:
+            for k, r in zip(idx, self.model.predict(crops, imgsz=128, verbose=False)):
+                p = r.probs
+                out[k] = (self.names[int(p.top1)], float(p.top1conf))
+        return out
+
+
 class TypeClassifier:
     """Learns how big an ordinary car looks at each height in this camera view (perspective), then calls a
     vehicle a minibus when it is clearly taller and longer than a car standing at the same spot.
