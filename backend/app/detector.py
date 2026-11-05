@@ -162,7 +162,9 @@ class CameraWorker(threading.Thread):
             # enlarging a small video (e.g. 552 px wide) to 960 px adds no detail but halves the frame rate,
             # and a higher frame rate matters more: the tracker loses fewer vehicles between frames
             imgsz = config.DETECT_IMGSZ if w > 800 else min(config.DETECT_IMGSZ, 640)
-            res = model.track(frame, persist=True, conf=config.DETECT_CONF, imgsz=imgsz,
+            # a wide view full of small, hazy cars (e.g. Main Circle) can ask for more detail in cameras.json
+            imgsz = self.cfg.get("imgsz", imgsz)
+            res = model.track(frame, persist=True, conf=self.cfg.get("conf", config.DETECT_CONF), imgsz=imgsz,
                               classes=classes, tracker=TRACKER_CFG, verbose=False)[0]
             now = time.time()
             visible = 0
