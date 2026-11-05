@@ -20,18 +20,14 @@ MAX_BACKLOG = 20000
 
 
 class Uplink(threading.Thread):
-    def __init__(self, cameras: dict, handlers: dict | None = None):
-        """handlers: {"video": fn(iid, path), "remove": fn(iid), "lines": fn(iid, lines)} - what to do
-        when someone uploads a video, removes one or redraws counting lines in the ONLINE app."""
+    def __init__(self, cameras: dict):
         super().__init__(daemon=True, name="uplink")
         self.cameras = cameras
         self.events: queue.Queue = queue.Queue(maxsize=MAX_BACKLOG)
-        self.status = {"state": "starting", "last_ok": None, "error": None, "backlog": 0, "jobs_done": 0}
+        self.status = {"state": "starting", "last_ok": None, "error": None, "backlog": 0}
         self.client = httpx.Client(base_url=config.CLOUD_URL.rstrip("/"), timeout=20,
                                    headers={"X-Station-Key": config.STATION_KEY})
         analytics.on_event(self._queue)
-        if handlers:
-            threading.Thread(target=self._job_loop, args=(handlers,), daemon=True, name="station-jobs").start()
 
     def _queue(self, event: dict):
         try:
@@ -61,15 +57,13 @@ class Uplink(threading.Thread):
         pending: list[dict] = []
         while True:
             pending += self._drain()
-            cams = list(self.cameras.items())          # copy: the job thread may add/remove cameras
-            payload = {"events": pending, "full": True,
-                       "cameras": {iid: {**w.status, "lines": w.lines} for iid, w in cams}}
+            payload = {"events": pending, "cameras": {iid: w.status for iid, w in self.cameras.items()}}
             try:
                 self.client.post("/api/ingest", json=payload).raise_for_status()
                 pending = []
                 if time.time() - last_frame >= config.FRAME_UPLOAD_SECONDS:
                     last_frame = time.time()
-                    for iid, w in cams:
+                    for iid, w in self.cameras.items():
                         if w.jpeg:
                             self.client.post(f"/api/ingest/frame/{iid}", content=self._small_jpeg(w.jpeg),
                                              headers={"Content-Type": "image/jpeg"}).raise_for_status()
@@ -79,47 +73,3 @@ class Uplink(threading.Thread):
                 pending = pending[-MAX_BACKLOG:]
             self.status["backlog"] = len(pending)
             time.sleep(2)
-
-    # ---- jobs from the online app: video uploads, removals, counting lines
-    def _job_loop(self, handlers: dict):
-        seen: set[str] = set()
-        while True:
-            try:
-                for job in self.client.get("/api/station/jobs").raise_for_status().json():
-                    if job["id"] not in seen:
-                        seen.add(job["id"])
-                        self._do_job(job, handlers)
-            except Exception as exc:
-                print(f"[station] could not check for jobs: {str(exc)[:120]}")
-            time.sleep(5)
-
-    def _do_job(self, job: dict, handlers: dict):
-        iid, action = job["iid"], job["action"]
-        result = {"ok": True, "error": None, "info": {}}
-        try:
-            if action == "video":
-                folder = config.ROOT / "videos"
-                folder.mkdir(exist_ok=True)
-                dest = folder / f"{iid}_{time.strftime('%Y%m%d-%H%M%S')}{job.get('ext', '.mp4')}"
-                print(f"[station] downloading video for {iid} ({job.get('megabytes')} MB)")
-                with self.client.stream("GET", f"/api/station/jobs/{job['id']}/video", timeout=None) as r:
-                    r.raise_for_status()
-                    with open(dest, "wb") as out:
-                        for chunk in r.iter_bytes(1 << 20):
-                            out.write(chunk)
-                result["info"] = handlers["video"](iid, dest)
-                print(f"[station] now analysing the uploaded video at {iid}")
-            elif action == "remove":
-                handlers["remove"](iid)
-            elif action == "lines":
-                handlers["lines"](iid, job["lines"])
-            else:
-                raise ValueError(f"unknown job {action}")
-        except Exception as exc:
-            result = {"ok": False, "error": str(exc)[:300], "info": {}}
-            print(f"[station] job {action} at {iid} failed: {exc}")
-        try:
-            self.client.post(f"/api/station/jobs/{job['id']}/done", json=result).raise_for_status()
-            self.status["jobs_done"] += 1
-        except Exception as exc:
-            print(f"[station] could not report job result: {str(exc)[:120]}")

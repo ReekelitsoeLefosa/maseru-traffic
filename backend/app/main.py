@@ -13,10 +13,8 @@ import time
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 
-from pathlib import Path
-
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,8 +30,9 @@ uplink = None
 
 
 def _save_cameras():
-    data = [dict(w.cfg, lines=w.lines) for w in list(cameras.values())]
-    config.CAMERAS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = [dict(w.cfg, lines=w.lines) for w in cameras.values()]
+    path = config.ROOT / "cameras.json"
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 @asynccontextmanager
@@ -59,11 +58,7 @@ async def lifespan(app: FastAPI):
     if config.CLOUD_URL:       # this machine is a camera station: send measurements to the cloud server
         global uplink
         from .uplink import Uplink
-        uplink = Uplink(cameras, handlers={           # jobs from the online app
-            "video": lambda iid, path: start_video_camera(iid, path),
-            "remove": lambda iid: remove_local_camera(iid),
-            "lines": lambda iid, lines: set_local_lines(iid, lines),
-        })
+        uplink = Uplink(cameras)
         uplink.start()
         print(f"[startup] sending measurements to {config.CLOUD_URL}")
 
@@ -188,13 +183,7 @@ def meta(request: Request):
         "places": [{"id": k, "name": v["name"], "lat": v["lat"], "lon": v["lon"]} for k, v in INTERSECTIONS.items()],
         "roads": [{k: e[k] for k in ("from", "to", "road", "km", "geometry")} for e in ROADS],
         "cameras": camera_ids(),
-        "local_cameras": list(cameras),
-        # videos can be analysed here (PC with AI) or by the connected camera station (cloud server)
-        "can_upload_video": admin and (ai_available() or station_online()),
-        "editable_cameras": (list(cameras) + [i for i in remote_cams if i not in cameras and station_online()])
-                            if admin else [],
-        "station_online": station_online(),
-        "max_upload_mb": MAX_VIDEO_MB if ai_available() else MAX_CLOUD_VIDEO_MB,
+        "local_cameras": list(cameras),     # counting lines can only be edited where the camera is attached
         "providers": {"sms": config.SMS_PROVIDER, "whatsapp": config.WHATSAPP_PROVIDER},
         "uplink": uplink.status if (admin and uplink) else None,
     }
@@ -263,13 +252,6 @@ def snapshot(iid: str):
 
 # ------------------------------------------- camera stations -> cloud server
 
-station = {"last": 0.0}          # when a camera station (the PC with the AI) last reported
-
-
-def station_online() -> bool:
-    return time.time() - station["last"] < REMOTE_TIMEOUT
-
-
 def require_station(request: Request):
     key = request.headers.get("x-station-key", "")
     if not (config.STATION_KEY and key and hmac.compare_digest(key, config.STATION_KEY)):
@@ -279,24 +261,15 @@ def require_station(request: Request):
 class Ingest(BaseModel):
     events: list[dict] = Field(default_factory=list, max_length=5000)
     cameras: dict[str, dict] = Field(default_factory=dict)
-    full: bool = False            # True: 'cameras' is the station's complete list
 
 
 def _station_camera(iid: str) -> dict:
     if iid not in remote_cams:
-        remote_cams[iid] = {"status": {}, "jpeg": None, "last": 0.0, "lines": []}
+        remote_cams[iid] = {"status": {}, "jpeg": None, "last": 0.0}
         analytics.set_source(iid, "camera")
         if simulator:
             simulator.stop_simulating(iid)
     return remote_cams[iid]
-
-
-def _forget_station_camera(iid: str):
-    """The station stopped analysing this junction: back to simulated traffic."""
-    if remote_cams.pop(iid, None) is not None:
-        analytics.set_source(iid, "simulated")
-        if simulator:
-            simulator.start_simulating(iid)
 
 
 @app.post("/api/ingest", dependencies=[Depends(require_station)])
@@ -304,16 +277,10 @@ def ingest(body: Ingest):
     """Measurements from a camera station (the PC running the AI at a junction)."""
     from .analytics import CATEGORIES
     now = time.time()
-    station["last"] = now
-    if body.full:                 # a video removed on the PC disappears online too
-        for iid in [i for i in remote_cams if i not in body.cameras]:
-            _forget_station_camera(iid)
     for iid, status in body.cameras.items():
         if iid in INTERSECTIONS:
             cam = _station_camera(iid)
             cam["status"] = {k: status.get(k) for k in ("state", "fps", "error", "model")}
-            if isinstance(status.get("lines"), list):
-                cam["lines"] = status["lines"]
             cam["last"] = now
     accepted = 0
     for e in body.events:
@@ -344,221 +311,26 @@ async def ingest_frame(iid: str, request: Request):
     return {"ok": True}
 
 
-# ---------------------------------------------- videos and counting lines per junction
-#
-# On the PC (AI installed) a video is analysed right here. On the cloud server (no AI) the upload
-# becomes a JOB: the camera station on the PC collects it, analyses the video and reports back.
-
-VIDEO_TYPES = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv"}
-MAX_VIDEO_MB = 2048               # on the PC
-MAX_CLOUD_VIDEO_MB = 300          # through the cloud server (phones on mobile data, small free server)
-DEFAULT_LINES = [{"approach": "N", "points": [0.05, 0.70, 0.95, 0.70], "count_direction": "both"}]
-UPLOADS = config.DATA_DIR / "uploads"
-jobs: dict[str, dict] = {}        # job id -> job, for the camera station
-
-
 class Line(BaseModel):
     approach: str = Field(..., max_length=20)
     points: list[float] = Field(..., min_length=4, max_length=4)   # normalised x1,y1,x2,y2
     count_direction: str = "both"
 
 
-def ai_available() -> bool:
-    """Video analysis needs the AI packages (installed on the Windows app PC, not on the cloud server)."""
-    if config.AI_DISABLED:
-        return False
-    try:
-        import cv2  # noqa: F401
-        import ultralytics  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def video_info(path: Path) -> dict:
-    import cv2
-    cap = cv2.VideoCapture(str(path))
-    ok, _ = cap.read()
-    info = {"seconds": round(cap.get(cv2.CAP_PROP_FRAME_COUNT) / (cap.get(cv2.CAP_PROP_FPS) or 25)),
-            "width": int(cap.get(3)), "height": int(cap.get(4))}
-    cap.release()
-    if not ok:
-        raise ValueError("This video can't be read. Try converting it to MP4 (H.264).")
-    return info
-
-
-def start_video_camera(iid: str, path: Path, lines: list | None = None) -> dict:
-    """Analyse a video file as this junction's camera (here, on the PC). Returns its size/length."""
-    info = video_info(path)
-    from .detector import CameraWorker
-    remove_local_camera(iid, back_to_simulation=False)
-    worker = CameraWorker({"intersection_id": iid, "source": str(path), "loop": True,
-                           "lines": [dict(l) for l in (lines or DEFAULT_LINES)]})
-    cameras[iid] = worker
-    worker.start()
-    if simulator:
-        simulator.stop_simulating(iid)
-    _save_cameras()
-    return info
-
-
-def remove_local_camera(iid: str, back_to_simulation: bool = True):
-    w = cameras.pop(iid, None)
-    if w:
-        w.stop()
-    if back_to_simulation:
-        analytics.set_source(iid, "simulated")
-        if simulator:
-            simulator.start_simulating(iid)
-        _save_cameras()
-
-
-def set_local_lines(iid: str, lines: list[dict]):
-    if iid not in cameras:
-        raise ValueError("No camera at this junction")
-    cameras[iid].set_lines(lines)
-    _save_cameras()
-
-
-async def _save_upload(file: UploadFile, dest: Path, limit_mb: int) -> int:
-    size = 0
-    with open(dest, "wb") as out:                          # stream to disk: videos can be large
-        while chunk := await file.read(1 << 20):
-            size += len(chunk)
-            if size > limit_mb << 20:
-                out.close()
-                dest.unlink(missing_ok=True)
-                raise HTTPException(413, f"Video is larger than {limit_mb} MB")
-            out.write(chunk)
-    return size
-
-
-def _new_job(action: str, iid: str, **extra) -> dict:
-    for old in [k for k, j in jobs.items() if time.time() - j["created"] > 6 * 3600]:
-        jobs.pop(old, None)                                # forget jobs older than 6 hours
-    job = {"id": secrets.token_hex(8), "action": action, "iid": iid, "status": "waiting",
-           "error": None, "created": time.time(), **extra}
-    jobs[job["id"]] = job
-    return job
-
-
-def _public_job(j: dict) -> dict:
-    return {k: v for k, v in j.items() if k != "path"}
-
-
 @app.get("/api/cameras/{iid}/lines")
 def get_lines(iid: str):
-    if iid in cameras:
-        return cameras[iid].lines
-    if iid in remote_cams:
-        return remote_cams[iid].get("lines", [])
-    raise HTTPException(404, "No camera at this intersection")
+    if iid not in cameras:
+        raise HTTPException(404, "No camera at this intersection")
+    return cameras[iid].lines
 
 
 @app.put("/api/cameras/{iid}/lines", dependencies=[Depends(require_admin)])
 def set_lines(iid: str, lines: list[Line]):
-    data = [l.model_dump() for l in lines]
-    if iid in cameras:
-        set_local_lines(iid, data)
-        return {"lines": cameras[iid].lines, "queued": False}
-    if iid in remote_cams and station_online():
-        remote_cams[iid]["lines"] = data                   # shown straight away; the PC applies it
-        job = _new_job("lines", iid, lines=data)
-        return {"lines": data, "queued": True, "job": job["id"]}
-    raise HTTPException(404, "No camera at this intersection (or the PC is not connected)")
-
-
-@app.post("/api/cameras/{iid}/video", dependencies=[Depends(require_admin)])
-async def upload_video(iid: str, file: UploadFile = File(...)):
-    """Use an uploaded video as this junction's camera."""
-    if iid not in INTERSECTIONS:
-        raise HTTPException(404, "Unknown intersection")
-    ext = Path(file.filename or "").suffix.lower()
-    if ext not in VIDEO_TYPES:
-        raise HTTPException(400, f"Please upload a video file ({', '.join(sorted(VIDEO_TYPES))})")
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-
-    if ai_available():                                     # on the PC: analyse it here
-        folder = config.ROOT / "videos"
-        folder.mkdir(exist_ok=True)
-        dest = folder / f"{iid}_{stamp}{ext}"
-        size = await _save_upload(file, dest, MAX_VIDEO_MB)
-        try:
-            info = start_video_camera(iid, dest)
-        except ValueError as exc:
-            dest.unlink(missing_ok=True)
-            raise HTTPException(400, str(exc))
-        return {"ok": True, "queued": False, "file": dest.name, "megabytes": round(size / 1e6, 1), **info,
-                "cameras_running": len(cameras)}
-
-    if not station_online():                               # on the cloud: needs the PC
-        raise HTTPException(503, "Your PC is not connected. Start the Maseru Smart Traffic app on the PC "
-                                 "(with CLOUD_URL set) so it can analyse the video.")
-    UPLOADS.mkdir(parents=True, exist_ok=True)
-    dest = UPLOADS / f"{iid}_{stamp}_{secrets.token_hex(4)}{ext}"
-    size = await _save_upload(file, dest, MAX_CLOUD_VIDEO_MB)
-    job = _new_job("video", iid, path=str(dest), ext=ext, filename=file.filename, megabytes=round(size / 1e6, 1))
-    return {"ok": True, "queued": True, "job": job["id"], "megabytes": job["megabytes"]}
-
-
-@app.delete("/api/cameras/{iid}", dependencies=[Depends(require_admin)])
-def remove_camera(iid: str):
-    """Stop using a video/camera at this junction; it goes back to simulated traffic."""
-    if iid in cameras:
-        remove_local_camera(iid)
-        return {"ok": True, "queued": False}
-    if iid in remote_cams and station_online():
-        job = _new_job("remove", iid)
-        return {"ok": True, "queued": True, "job": job["id"]}
-    raise HTTPException(404, "No camera at this intersection (or the PC is not connected)")
-
-
-@app.get("/api/jobs", dependencies=[Depends(require_admin)])
-def list_jobs():
-    return sorted((_public_job(j) for j in jobs.values()), key=lambda j: -j["created"])
-
-
-# ---- endpoints the camera station (PC) uses to collect and finish jobs
-
-@app.get("/api/station/jobs", dependencies=[Depends(require_station)])
-def station_jobs():
-    station["last"] = time.time()
-    todo = [j for j in jobs.values() if j["status"] in ("waiting", "sent")]
-    for j in todo:
-        if j["status"] == "waiting":
-            j["status"] = "sent"
-    return [_public_job(j) for j in sorted(todo, key=lambda j: j["created"])]
-
-
-@app.get("/api/station/jobs/{job_id}/video", dependencies=[Depends(require_station)])
-def station_job_video(job_id: str):
-    j = jobs.get(job_id)
-    if not j or j["action"] != "video" or not Path(j.get("path", "")).exists():
-        raise HTTPException(404, "No video for this job")
-    j["status"] = "downloading"
-    return FileResponse(j["path"], media_type="application/octet-stream", filename=Path(j["path"]).name)
-
-
-class JobDone(BaseModel):
-    ok: bool
-    error: str | None = None
-    info: dict = Field(default_factory=dict)
-
-
-@app.post("/api/station/jobs/{job_id}/done", dependencies=[Depends(require_station)])
-def station_job_done(job_id: str, body: JobDone):
-    j = jobs.get(job_id)
-    if not j:
-        raise HTTPException(404, "Unknown job")
-    j["status"] = "done" if body.ok else "failed"
-    j["error"] = None if body.ok else (body.error or "failed")[:300]
-    j["info"] = body.info
-    if j.get("path"):
-        Path(j["path"]).unlink(missing_ok=True)            # the PC has it now; free the server's disk
-        j.pop("path", None)
-    if body.ok and j["action"] == "remove":
-        _forget_station_camera(j["iid"])
-    return {"ok": True}
+    if iid not in cameras:
+        raise HTTPException(404, "No camera at this intersection")
+    cameras[iid].set_lines([l.model_dump() for l in lines])
+    _save_cameras()
+    return cameras[iid].lines
 
 
 # ------------------------------------------------------------ subscribers
