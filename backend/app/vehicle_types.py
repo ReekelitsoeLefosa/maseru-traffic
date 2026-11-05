@@ -49,28 +49,86 @@ def has_yellow_belt(frame, box, threshold: float = 0.35) -> bool:
     return yellow_belt_score(frame, box) >= threshold
 
 
+def mostly_yellow(frame, box) -> bool:
+    """Some 4+1 cabs are painted yellow all over rather than having a belt."""
+    x1, y1, x2, y2 = (int(v) for v in box)
+    if x2 - x1 < MIN_BOX_WIDTH or y2 - y1 < 10:
+        return False
+    body = frame[max(0, y1 + (y2 - y1) // 4): y2, max(0, x1): x2]   # skip the windscreen/roof
+    if body.size == 0:
+        return False
+    return (cv2.inRange(cv2.cvtColor(body, cv2.COLOR_BGR2HSV), YELLOW_LO, YELLOW_HI) > 0).mean() > 0.30
+
+
+# A minibus (Quantum/HiAce) stands ~1.3x taller and is a bit longer than an ordinary car at the same spot.
+MINIBUS_MIN_REL_H = 1.28
+MINIBUS_MIN_REL_W = 1.05
+MIN_SIZE_SAMPLES = 150      # car boxes needed before the camera's perspective is known
+MIN_JUDGE_PX = 40           # far-away vehicles are too few pixels (and too often half-hidden) to size up
+
+
 class TypeClassifier:
-    """Keeps a running median of car sizes in this camera view for the minibus rule."""
+    """Learns how big an ordinary car looks at each height in this camera view (perspective), then calls a
+    vehicle a minibus when it is clearly taller and longer than a car standing at the same spot.
+
+    The previous rule compared every vehicle with the average car in the whole picture, so anything close
+    to the camera (bakkies, SUVs, even hatchbacks) looked "big" and was called a minibus.
+    """
 
     def __init__(self, minibus_rule: bool = True):
         self.minibus_rule = minibus_rule
-        self.car_areas: deque = deque(maxlen=300)
+        self.samples: deque = deque(maxlen=2000)   # (ground y, height, width) as fractions of the frame
+        self._fit = None
+        self._new = 0
+
+    def _learn(self, y, h, w):
+        self.samples.append((y, h, w))
+        self._new += 1
+        if len(self.samples) >= MIN_SIZE_SAMPLES and (self._fit is None or self._new >= 100):
+            self._new = 0
+            s = np.array(self.samples)
+            edges = np.quantile(s[:, 0], np.linspace(0, 1, 9))
+            pts = [(s[m, 0].mean(), np.median(s[m, 1]), np.median(s[m, 2]))
+                   for a, b in zip(edges[:-1], edges[1:]) if (m := (s[:, 0] >= a) & (s[:, 0] <= b)).sum() >= 10]
+            if len(pts) >= 3:
+                p = np.array(pts)   # medians per band, so the odd big vehicle doesn't skew the line
+                self._fit = (np.polyfit(p[:, 0], p[:, 1], 1), np.polyfit(p[:, 0], p[:, 2], 1))
+
+    def relative_size(self, box, frame_shape):
+        """(height, width) compared with an ordinary car at the same ground position, or None if unknown."""
+        if self._fit is None:
+            return None
+        H, W = frame_shape[:2]
+        y = box[3] / H
+        eh, ew = np.polyval(self._fit[0], y), np.polyval(self._fit[1], y)
+        if eh <= 0.01 or ew <= 0.01:
+            return None
+        return (box[3] - box[1]) / H / eh, (box[2] - box[0]) / W / ew
 
     def classify(self, coco_cls: int, frame, box) -> str | None:
         cat = COCO_MAP.get(coco_cls)
         if cat is None:
             return None
-        x1, y1, x2, y2 = box
-        w, h = x2 - x1, y2 - y1
-        area = w * h
+        H, W = frame.shape[:2]
+        cut_off = box[0] <= 3 or box[2] >= W - 3 or box[3] >= H - 3   # partly outside the picture
         if cat == "private_car":
-            self.car_areas.append(area)
-        if self.minibus_rule and len(self.car_areas) >= 20:
-            med = float(np.median(self.car_areas))
-            if cat == "private_car" and area > 1.8 * med and h / max(w, 1) > 0.7:
-                return "minibus_taxi"
-            if cat in ("bus", "truck") and area < 2.2 * med and h / max(w, 1) > 0.7:
-                return "minibus_taxi"
-        if cat == "private_car" and has_yellow_belt(frame, box):
-            return "sedan_taxi"
+            if has_yellow_belt(frame, box) or mostly_yellow(frame, box):
+                return "sedan_taxi"                    # cab check first: a cab is never a minibus
+            if not cut_off:
+                self._learn(box[3] / H, (box[3] - box[1]) / H, (box[2] - box[0]) / W)
+        if not self.minibus_rule or cut_off or cat not in ("private_car", "bus", "truck"):
+            return cat
+        if box[3] - box[1] < MIN_JUDGE_PX:
+            return cat
+        rel = self.relative_size(box, frame.shape)
+        if rel is None:
+            return cat
+        rh, rw = rel
+        if cat == "private_car" and rh >= MINIBUS_MIN_REL_H and rw >= MINIBUS_MIN_REL_W:
+            return "minibus_taxi"
+        # the model often calls a minibus a "truck" or "bus"; a minibus is minibus-sized and van-shaped (box about
+        # as tall as wide), while lorries are longer (flat bed) or, seen head-on, much taller than wide
+        shape = (box[3] - box[1]) / max(box[2] - box[0], 1)
+        if cat in ("bus", "truck") and 1.25 <= rh < 1.75 and MINIBUS_MIN_REL_W <= rw < 1.45 and 0.84 <= shape <= 1.08:
+            return "minibus_taxi"
         return cat
