@@ -559,7 +559,15 @@ async def meta_incoming(request: Request):
     raw = await request.body()
     if config.META_APP_SECRET:     # prove the message really comes from Meta
         expected = "sha256=" + hmac.new(config.META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, request.headers.get("x-hub-signature-256", "")):
+        got = request.headers.get("x-hub-signature-256", "")
+        if not hmac.compare_digest(expected, got):
+            # never log the secret itself; its shape is enough to spot a wrong paste (an App ID is 15-16
+            # digits, a real app secret is 32 hex characters, quotes make it 34)
+            s = config.META_APP_SECRET
+            print(f"[whatsapp] bad webhook signature: header {'present' if got else 'MISSING'}; "
+                  f"META_APP_SECRET has {len(s)} chars, "
+                  f"{'32 hex = right shape' if len(s) == 32 and all(c in '0123456789abcdef' for c in s) else 'NOT the shape of an app secret'}",
+                  flush=True)
             raise HTTPException(403, "Bad signature")
     data = json.loads(raw or b"{}")
     for entry in data.get("entry", []):
