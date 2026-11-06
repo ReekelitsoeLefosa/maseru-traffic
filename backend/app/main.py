@@ -601,7 +601,12 @@ async def meta_incoming(request: Request):
     data = json.loads(raw or b"{}")
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
-            for msg in change.get("value", {}).get("messages", []):
+            value = change.get("value", {})
+            to_id = value.get("metadata", {}).get("phone_number_id", "")
+            if config.META_WA_PHONE_NUMBER_ID and to_id != config.META_WA_PHONE_NUMBER_ID:
+                print(f"[whatsapp] ignored a webhook for another number ({to_id or 'none'})", flush=True)
+                continue        # only messages sent to OUR WhatsApp number (extra check, also without the app secret)
+            for msg in value.get("messages", []):
                 if msg.get("type") != "text":
                     continue
                 phone = "+" + msg["from"]
