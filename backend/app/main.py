@@ -554,20 +554,48 @@ def meta_verify(request: Request):
     raise HTTPException(403, "Verification failed")
 
 
+def _escape_unicode(text: str) -> str:
+    """Meta signs the payload with non-ASCII characters written as lowercase \\uXXXX escapes
+    (emoji as surrogate pairs), but delivers the real characters."""
+    out = []
+    for ch in text:
+        cp = ord(ch)
+        if cp < 128:
+            out.append(ch)
+        elif cp <= 0xFFFF:
+            out.append(f"\\u{cp:04x}")
+        else:
+            cp -= 0x10000
+            out.append(f"\\u{0xD800 + (cp >> 10):04x}\\u{0xDC00 + (cp & 0x3FF):04x}")
+    return "".join(out)
+
+
+def _meta_signature_ok(raw: bytes, got: str) -> bool:
+    key = config.META_APP_SECRET.encode()
+    candidates = [raw]
+    try:
+        escaped = _escape_unicode(raw.decode("utf-8"))
+        candidates += [escaped.encode(), escaped.replace("/", "\\/").encode()]
+    except UnicodeDecodeError:
+        pass
+    return any(hmac.compare_digest("sha256=" + hmac.new(key, c, hashlib.sha256).hexdigest(), got)
+               for c in candidates)
+
+
 @app.post("/webhooks/meta/whatsapp")
 async def meta_incoming(request: Request):
     raw = await request.body()
     if config.META_APP_SECRET:     # prove the message really comes from Meta
-        expected = "sha256=" + hmac.new(config.META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
         got = request.headers.get("x-hub-signature-256", "")
-        if not hmac.compare_digest(expected, got):
+        if not _meta_signature_ok(raw, got):
             # never log the secret itself; its shape is enough to spot a wrong paste (an App ID is 15-16
             # digits, a real app secret is 32 hex characters, quotes make it 34)
             s = config.META_APP_SECRET
             print(f"[whatsapp] bad webhook signature: header {'present' if got else 'MISSING'}; "
                   f"META_APP_SECRET has {len(s)} chars, "
                   f"{'32 hex = right shape' if len(s) == 32 and all(c in '0123456789abcdef' for c in s) else 'NOT the shape of an app secret'}; "
-                  f"fingerprint {hashlib.sha256(s.encode()).hexdigest()[:8]}",   # one-way: can't be turned back into the secret
+                  f"fingerprint {hashlib.sha256(s.encode()).hexdigest()[:8]}; "   # one-way: can't be turned back into the secret
+                  f"body {len(raw)} bytes, {'has' if any(b > 127 for b in raw) else 'no'} non-ASCII characters",
                   flush=True)
             raise HTTPException(403, "Bad signature")
     data = json.loads(raw or b"{}")
