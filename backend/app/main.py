@@ -169,7 +169,11 @@ def healthz():
     Always 200 while the server runs (Render restarts services whose health check fails), with the
     database status inside so problems are visible."""
     return {"ok": True, "database": db.status(),
-            "cameras_online": sum(1 for r in remote_cams.values() if time.time() - r["last"] < REMOTE_TIMEOUT)}
+            "cameras_online": sum(1 for r in remote_cams.values() if time.time() - r["last"] < REMOTE_TIMEOUT),
+            "whatsapp_templates": TEMPLATE_STATUS}   # Meta's latest verdicts, e.g. traffic_alert APPROVED
+
+
+TEMPLATE_STATUS: dict[str, dict] = {}   # filled by Meta's message_template_status_update webhooks
 
 
 @app.get("/api/meta")
@@ -602,6 +606,13 @@ async def meta_incoming(request: Request):
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
+            if change.get("field") == "message_template_status_update":
+                # Meta's verdict on a template we submitted (APPROVED / REJECTED / PAUSED ...)
+                name = str(value.get("message_template_name", "?"))[:64]
+                TEMPLATE_STATUS[name] = {"status": str(value.get("event", "?"))[:32],
+                                         "reason": str(value.get("reason") or "")[:200], "at": int(time.time())}
+                print(f"[whatsapp] template {name}: {TEMPLATE_STATUS[name]}", flush=True)
+                continue
             to_id = value.get("metadata", {}).get("phone_number_id", "")
             if config.META_WA_PHONE_NUMBER_ID and to_id != config.META_WA_PHONE_NUMBER_ID:
                 print(f"[whatsapp] ignored a webhook for another number ({to_id or 'none'})", flush=True)
