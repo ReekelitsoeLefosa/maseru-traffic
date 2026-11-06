@@ -566,7 +566,8 @@ async def meta_incoming(request: Request):
             s = config.META_APP_SECRET
             print(f"[whatsapp] bad webhook signature: header {'present' if got else 'MISSING'}; "
                   f"META_APP_SECRET has {len(s)} chars, "
-                  f"{'32 hex = right shape' if len(s) == 32 and all(c in '0123456789abcdef' for c in s) else 'NOT the shape of an app secret'}",
+                  f"{'32 hex = right shape' if len(s) == 32 and all(c in '0123456789abcdef' for c in s) else 'NOT the shape of an app secret'}; "
+                  f"fingerprint {hashlib.sha256(s.encode()).hexdigest()[:8]}",   # one-way: can't be turned back into the secret
                   flush=True)
             raise HTTPException(403, "Bad signature")
     data = json.loads(raw or b"{}")
