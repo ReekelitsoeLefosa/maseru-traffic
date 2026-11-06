@@ -59,14 +59,14 @@ TEXTBEE_WEBHOOK_SECRET = os.getenv("TEXTBEE_WEBHOOK_SECRET", "")  # signs incomi
 SMS_DAILY_LIMIT = int(os.getenv("SMS_DAILY_LIMIT") or "45")
 WHATSAPP_PROVIDER = (os.getenv("WHATSAPP_PROVIDER") or "console").strip().lower()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()   # pasted values often carry a stray space/newline
 TWILIO_SMS_FROM = os.getenv("TWILIO_SMS_FROM", "")            # e.g. +1XXXXXXXXXX or alphanumeric sender id
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")  # e.g. whatsapp:+14155238886 (sandbox)
-META_WA_TOKEN = os.getenv("META_WA_TOKEN", "")
-META_WA_PHONE_NUMBER_ID = os.getenv("META_WA_PHONE_NUMBER_ID", "")
-META_WA_VERIFY_TOKEN = os.getenv("META_WA_VERIFY_TOKEN", "maseru-traffic-verify")
+META_WA_TOKEN = os.getenv("META_WA_TOKEN", "").strip()   # pasted values often carry a stray space/newline
+META_WA_PHONE_NUMBER_ID = os.getenv("META_WA_PHONE_NUMBER_ID", "").strip()   # pasted values often carry a stray space/newline
+META_WA_VERIFY_TOKEN = os.getenv("META_WA_VERIFY_TOKEN", "maseru-traffic-verify").strip()
 # App secret (Meta app dashboard -> App settings -> Basic): proves incoming webhooks really come from Meta.
-META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "").strip()   # pasted values often carry a stray space/newline
 # Names of the message templates you created and Meta approved (WhatsApp Manager -> Message templates).
 META_WA_ALERT_TEMPLATE = os.getenv("META_WA_ALERT_TEMPLATE", "traffic_alert")
 META_WA_CODE_TEMPLATE = os.getenv("META_WA_CODE_TEMPLATE", "verification_code")
@@ -97,7 +97,7 @@ FCM_CREDENTIALS_JSON = os.getenv("FCM_CREDENTIALS_JSON", "")
 # On the camera station (the PC running the AI): where to send measurements.
 CLOUD_URL = os.getenv("CLOUD_URL", "")
 # Shared secret between stations and the cloud server (set the same value on both).
-STATION_KEY = os.getenv("STATION_KEY", "")
+STATION_KEY = os.getenv("STATION_KEY", "").strip()   # pasted values often carry a stray space/newline
 FRAME_UPLOAD_SECONDS = float(os.getenv("FRAME_UPLOAD_SECONDS", "3"))   # how often to send a video snapshot
 FRAME_UPLOAD_WIDTH = int(os.getenv("FRAME_UPLOAD_WIDTH", "640"))
 
