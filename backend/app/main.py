@@ -31,6 +31,8 @@ uplink = None
 
 def _save_cameras():
     data = [dict(w.cfg, lines=w.lines) for w in cameras.values()]
+    # keep cameras that are switched off ("enabled": false) so their settings aren't lost
+    data += [c for c in config.load_cameras() if c.get("enabled") is False and c["intersection_id"] not in cameras]
     path = config.ROOT / "cameras.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -39,6 +41,8 @@ def _save_cameras():
 async def lifespan(app: FastAPI):
     global simulator
     for cfg in config.load_cameras():
+        if cfg.get("enabled") is False:     # switched off in cameras.json: the junction uses simulated traffic
+            continue
         if cfg["intersection_id"] not in INTERSECTIONS:
             print(f"[startup] unknown intersection in cameras.json: {cfg['intersection_id']}")
             continue
